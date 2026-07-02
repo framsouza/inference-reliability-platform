@@ -17,6 +17,22 @@ spec:
       containers:
         - name: vllm
           image: {{ .Values.image }}
+          {{- if and .Values.otlp.tracesEndpoint .Values.otlp.installSdk }}
+          command:
+            - /bin/bash
+            - -euo
+            - pipefail
+            - -c
+            - |
+              pip install --no-cache-dir --quiet \
+                opentelemetry-api \
+                opentelemetry-sdk \
+                opentelemetry-exporter-otlp \
+                opentelemetry-semantic-conventions
+              exec python3 -m vllm.entrypoints.openai.api_server \
+                --model "{{ .Values.model }}" \
+                --otlp-traces-endpoint "{{ .Values.otlp.tracesEndpoint }}"
+          {{- else }}
           args:
             - --model
             - "{{ .Values.model }}"
@@ -24,6 +40,7 @@ spec:
             - --otlp-traces-endpoint
             - "{{ .Values.otlp.tracesEndpoint }}"
             {{- end }}
+          {{- end }}
           ports:
             - name: http
               containerPort: 8000
@@ -32,11 +49,11 @@ spec:
               nvidia.com/gpu: {{ .Values.gpu }}
           readinessProbe:
             httpGet: {path: /health, port: http}
-            initialDelaySeconds: 90
+            initialDelaySeconds: 120
             periodSeconds: 10
           livenessProbe:
             httpGet: {path: /health, port: http}
-            initialDelaySeconds: 120
+            initialDelaySeconds: 180
             periodSeconds: 15
           env:
             - name: HUGGING_FACE_HUB_TOKEN

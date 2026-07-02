@@ -14,3 +14,4 @@ hfToken:
 otlp:
   tracesEndpoint: http://otel-collector.monitoring.svc.cluster.local:4318
   serviceName: vllm
+  installSdk: true
