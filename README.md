@@ -43,54 +43,81 @@ sudo systemctl restart k3s
 ## 2. Bootstrap
 
 Repo is private, so ArgoCD needs a fine-grained PAT (Contents: Read on this
-repo). Then:
+repo). Export both secrets and run the script — it installs ArgoCD, waits for
+Vault, seeds `secret/hf` + `secret/github`, and force-syncs the ExternalSecrets.
 
 ```bash
 export GITHUB_TOKEN=ghp_...
 export GITHUB_USER=framsouza
 export REPO_URL=https://github.com/framsouza/nvidia-brev-vllm.git
+export HF_TOKEN=hf_...
 ./bootstrap/install.sh
 ```
 
-Script installs ArgoCD (`ARGOCD_VERSION`, default `v2.13.1`), writes the repo
-credential Secret, applies the root app. The `ExternalSecret` in
-`secrets/argocd-repo-external-secret.yaml` takes ownership of the same Secret
-once Vault is seeded — after that, rotating the PAT is a `vault kv put`.
-
-## 3. Seed Vault
+The `ExternalSecret` in `secrets/argocd-repo-external-secret.yaml` takes
+ownership of the bootstrap-created `repo-nvidia-brev-vllm` Secret once ESO
+comes up. From then on, rotating the PAT is a `vault kv put`:
 
 ```bash
-kubectl -n vault rollout status statefulset/vault --timeout=5m
-
-kubectl -n vault exec -i vault-0 -- sh -c \
-  "VAULT_TOKEN=root vault kv put secret/hf token='${HF_TOKEN}'"
-
 kubectl -n vault exec -i vault-0 -- sh -c \
   "VAULT_TOKEN=root vault kv put secret/github \
-     url='${REPO_URL}' username='${GITHUB_USER}' password='${GITHUB_TOKEN}'"
+     url='${REPO_URL}' username='${GITHUB_USER}' password='${NEW_TOKEN}'"
+kubectl -n argocd annotate externalsecret repo-nvidia-brev-vllm force-sync=$(date +%s) --overwrite
 ```
+
+Same shape for rotating the HF token via `secret/hf`.
 
 | ExternalSecret          | Vault path      | Target                          |
 |-------------------------|-----------------|---------------------------------|
 | `hf-token`              | `secret/hf`     | `llama/hf-token`                |
 | `repo-nvidia-brev-vllm` | `secret/github` | `argocd/repo-nvidia-brev-vllm`  |
 
-Force a refresh instead of waiting the hour:
+**Vault pod restarted?** Dev mode is in-memory — re-seed:
 
 ```bash
-kubectl -n llama annotate externalsecret hf-token force-sync=$(date +%s) --overwrite
+kubectl -n vault rollout status statefulset/vault --timeout=5m
+kubectl -n vault exec -i vault-0 -- sh -c \
+  "VAULT_TOKEN=root vault kv put secret/hf token='$HF_TOKEN'"
+kubectl -n vault exec -i vault-0 -- sh -c \
+  "VAULT_TOKEN=root vault kv put secret/github \
+     url='$REPO_URL' username='$GITHUB_USER' password='$GITHUB_TOKEN'"
+kubectl -n llama  annotate externalsecret hf-token              force-sync=$(date +%s) --overwrite
 kubectl -n argocd annotate externalsecret repo-nvidia-brev-vllm force-sync=$(date +%s) --overwrite
 ```
 
-## 4. Verify
+## 3. Verify
 
 ```bash
-kubectl -n argocd port-forward svc/argocd-server 8080:443 &
 kubectl -n argocd get applications
 kubectl -n gpu-operator get pods
 kubectl -n vault get pods
 kubectl -n external-secrets get pods
 kubectl -n llama get externalsecret,secret,pods
+```
+
+### ArgoCD UI on Brev
+
+`bootstrap/install.sh` already patches `argocd-cmd-params-cm` with
+`server.insecure: "true"` (Brev's port publisher is HTTP-only) and
+`controller.diff.server.side: "true"` (avoids `terminatingReplicas: field not
+declared in schema` on k8s ≥1.33). Port-forward on port 80:
+
+```bash
+kubectl -n argocd port-forward --address 0.0.0.0 svc/argocd-server 8080:80
+```
+
+Expose port `8080` in the Brev UI, then hit the Brev-provided URL over
+`http://`. Login: `admin` / password from `argocd-initial-admin-secret`
+(printed by `bootstrap/install.sh`, or `kubectl -n argocd get secret
+argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`).
+
+If you bootstrapped before this patch was added, run it manually:
+
+```bash
+kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
+  -p '{"data":{"controller.diff.server.side":"true","server.insecure":"true"}}'
+kubectl -n argocd rollout restart deploy/argocd-server
+kubectl -n argocd rollout restart statefulset/argocd-application-controller
 ```
 
 DCGM diag:
