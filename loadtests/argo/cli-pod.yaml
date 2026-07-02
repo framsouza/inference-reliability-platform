@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo-cli
+  namespace: argo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argo-cli
+  namespace: argo
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources:
+      - workflows
+      - workflows/finalizers
+      - workflowtemplates
+      - cronworkflows
+      - workflowtaskresults
+      - workfloweventbindings
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argo-cli
+  namespace: argo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argo-cli
+subjects:
+  - kind: ServiceAccount
+    name: argo-cli
+    namespace: argo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argo-cli
+  namespace: argo
+  labels:
+    app: argo-cli
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: argo-cli}
+  template:
+    metadata:
+      labels: {app: argo-cli}
+    spec:
+      serviceAccountName: argo-cli
+      initContainers:
+        - name: install-argo
+          image: alpine:3.20
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              apk add --no-cache curl ca-certificates
+              curl -sSL https://github.com/argoproj/argo-workflows/releases/download/v3.6.2/argo-linux-amd64.gz \
+                | gunzip > /out/argo
+              chmod +x /out/argo
+              /out/argo version
+          volumeMounts:
+            - {name: bin, mountPath: /out}
+      containers:
+        - name: cli
+          image: alpine:3.20
+          command: [/bin/sh, -c]
+          args: ["apk add --no-cache bash ca-certificates >/dev/null && exec sleep infinity"]
+          workingDir: /workspace
+          env:
+            - name: ARGO_NAMESPACE
+              value: argo
+          volumeMounts:
+            - {name: bin, mountPath: /usr/local/bin/argo, subPath: argo}
+            - {name: workspace, mountPath: /workspace}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits:   {cpu: 200m, memory: 128Mi}
+          readinessProbe:
+            exec:
+              command: [argo, version]
+            initialDelaySeconds: 5
+            periodSeconds: 30
+      volumes:
+        - {name: bin, emptyDir: {}}
+        - {name: workspace, emptyDir: {}}
