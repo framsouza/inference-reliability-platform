@@ -1,0 +1,60 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gpu-health
+  namespace: monitoring
+  labels:
+    release: kps
+spec:
+  groups:
+    - name: gpu.health
+      interval: 30s
+      rules:
+        - alert: GPUXIDError
+          expr: increase(DCGM_FI_DEV_XID_ERRORS[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU XID error on {{ $labels.Hostname }} GPU {{ $labels.gpu }}"
+            description: "XID error detected. Check dmesg / nvidia-smi -q. Usually requires pod restart or node reboot."
+        - alert: GPUHighTemperature
+          expr: DCGM_FI_DEV_GPU_TEMP > 85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU {{ $labels.gpu }} temperature > 85C"
+            description: "Temperature {{ $value }}C on {{ $labels.Hostname }}. Thermal throttling likely."
+        - alert: GPUHighMemoryUsage
+          expr: (DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE)) > 0.95
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU {{ $labels.gpu }} memory > 95%"
+            description: "GPU framebuffer utilization {{ $value | humanizePercentage }} on {{ $labels.Hostname }}."
+        - alert: GPUECCDoubleBitError
+          expr: increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL[10m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU {{ $labels.gpu }} uncorrectable ECC error"
+            description: "Double-bit ECC on {{ $labels.Hostname }}. GPU should be quarantined."
+        - alert: GPUThermalThrottling
+          expr: DCGM_FI_DEV_CLOCKS_EVENT_REASONS{clocks_event_reason="HW_THERMAL_SLOWDOWN"} > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU {{ $labels.gpu }} thermal throttling"
+            description: "HW thermal slowdown active on {{ $labels.Hostname }}."
+        - alert: GPUExporterDown
+          expr: up{job=~".*dcgm.*"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "DCGM exporter down"
+            description: "No GPU metrics — dashboards and alerts will be blind."

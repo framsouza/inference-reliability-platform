@@ -8,3 +8,9 @@ devicePlugin:
   env:
     - name: DEVICE_LIST_STRATEGY
       value: volume-mounts
+dcgmExporter:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    honorLabels: false

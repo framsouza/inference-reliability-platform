@@ -10,101 +10,117 @@ data:
     {
       "annotations": {"list": []},
       "editable": true,
-      "fiscalYearStartMonth": 0,
       "graphTooltip": 1,
       "id": null,
       "links": [],
-      "liveNow": false,
       "panels": [
         {
           "type": "stat",
-          "title": "Running requests",
-          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "title": "Running",
+          "gridPos": {"h": 4, "w": 3, "x": 0, "y": 0},
           "id": 1,
-          "targets": [{"expr": "sum(vllm:num_requests_running)", "refId": "A"}],
+          "targets": [{"expr": "sum(vllm:num_requests_running{model_name=~\"$model\"})", "refId": "A"}],
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 8}, {"color": "red", "value": 16}]}, "unit": "short"}},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
         },
         {
           "type": "stat",
-          "title": "Waiting requests",
-          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+          "title": "Waiting",
+          "gridPos": {"h": 4, "w": 3, "x": 3, "y": 0},
           "id": 2,
-          "targets": [{"expr": "sum(vllm:num_requests_waiting)", "refId": "A"}],
+          "targets": [{"expr": "sum(vllm:num_requests_waiting{model_name=~\"$model\"})", "refId": "A"}],
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 4}, {"color": "red", "value": 16}]}, "unit": "short"}},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
         },
         {
           "type": "stat",
-          "title": "KV cache usage",
-          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+          "title": "KV cache",
+          "gridPos": {"h": 4, "w": 3, "x": 6, "y": 0},
           "id": 3,
-          "targets": [{"expr": "max(vllm:gpu_cache_usage_perc) * 100", "refId": "A"}],
+          "targets": [{"expr": "max(vllm:gpu_cache_usage_perc{model_name=~\"$model\"}) * 100", "refId": "A"}],
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 75}, {"color": "red", "value": 90}]}, "unit": "percent", "max": 100, "min": 0}},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
         },
         {
           "type": "stat",
-          "title": "Successful req/s",
-          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+          "title": "Success rate",
+          "gridPos": {"h": 4, "w": 3, "x": 9, "y": 0},
           "id": 4,
-          "targets": [{"expr": "sum(rate(vllm:request_success_total[1m]))", "refId": "A"}],
-          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "reqps"}},
+          "targets": [{"expr": "sum(rate(vllm:request_success_total{model_name=~\"$model\"}[5m])) / clamp_min(sum(rate(vllm:e2e_request_latency_seconds_count{model_name=~\"$model\"}[5m])), 0.0001)", "refId": "A"}],
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.99}, {"color": "green", "value": 0.999}]}, "unit": "percentunit", "max": 1, "min": 0, "decimals": 3}},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
         },
         {
           "type": "stat",
-          "title": "Generation tokens/s",
-          "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+          "title": "Gen tokens/s",
+          "gridPos": {"h": 4, "w": 3, "x": 12, "y": 0},
           "id": 5,
-          "targets": [{"expr": "sum(rate(vllm:generation_tokens_total[1m]))", "refId": "A"}],
-          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}},
+          "targets": [{"expr": "sum(rate(vllm:generation_tokens_total{model_name=~\"$model\"}[1m]))", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
         },
         {
           "type": "stat",
-          "title": "p95 e2e latency",
-          "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+          "title": "p95 TTFT",
+          "gridPos": {"h": 4, "w": 3, "x": 15, "y": 0},
           "id": 6,
-          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(vllm:e2e_request_latency_seconds_bucket[5m])) by (le))", "refId": "A"}],
+          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "refId": "A"}],
+          "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 2}]}, "unit": "s"}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat",
+          "title": "p95 e2e",
+          "gridPos": {"h": 4, "w": 3, "x": 18, "y": 0},
+          "id": 7,
+          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(vllm:e2e_request_latency_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "refId": "A"}],
           "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 15}]}, "unit": "s"}},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
         },
         {
-          "type": "timeseries",
-          "title": "Time to first token (TTFT)",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
-          "id": 7,
-          "targets": [
-            {"expr": "histogram_quantile(0.50, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
-            {"expr": "histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
-            {"expr": "histogram_quantile(0.99, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
-          ],
-          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
-          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
-        },
-        {
-          "type": "timeseries",
-          "title": "End-to-end request latency",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "type": "stat",
+          "title": "Pod restarts",
+          "gridPos": {"h": 4, "w": 3, "x": 21, "y": 0},
           "id": 8,
-          "targets": [
-            {"expr": "histogram_quantile(0.50, sum(rate(vllm:e2e_request_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
-            {"expr": "histogram_quantile(0.95, sum(rate(vllm:e2e_request_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
-            {"expr": "histogram_quantile(0.99, sum(rate(vllm:e2e_request_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
-          ],
-          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
-          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+          "targets": [{"expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"llama\"}[1h]))", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value"}
         },
         {
           "type": "timeseries",
-          "title": "Inter-token latency (ITL)",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "title": "Time to first token",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
           "id": 9,
           "targets": [
-            {"expr": "histogram_quantile(0.50, sum(rate(vllm:time_per_output_token_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
-            {"expr": "histogram_quantile(0.95, sum(rate(vllm:time_per_output_token_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
-            {"expr": "histogram_quantile(0.99, sum(rate(vllm:time_per_output_token_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
+            {"expr": "histogram_quantile(0.50, sum(rate(vllm:time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p50", "refId": "A", "exemplar": true},
+            {"expr": "histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p95", "refId": "B", "exemplar": true},
+            {"expr": "histogram_quantile(0.99, sum(rate(vllm:time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p99", "refId": "C", "exemplar": true}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "End-to-end latency",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "id": 10,
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum(rate(vllm:e2e_request_latency_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p50", "refId": "A", "exemplar": true},
+            {"expr": "histogram_quantile(0.95, sum(rate(vllm:e2e_request_latency_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p95", "refId": "B", "exemplar": true},
+            {"expr": "histogram_quantile(0.99, sum(rate(vllm:e2e_request_latency_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p99", "refId": "C", "exemplar": true}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Inter-token latency",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "id": 11,
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum(rate(vllm:time_per_output_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p50", "refId": "A", "exemplar": true},
+            {"expr": "histogram_quantile(0.95, sum(rate(vllm:time_per_output_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p95", "refId": "B", "exemplar": true},
+            {"expr": "histogram_quantile(0.99, sum(rate(vllm:time_per_output_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p99", "refId": "C", "exemplar": true}
           ],
           "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
           "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
@@ -113,10 +129,10 @@ data:
           "type": "timeseries",
           "title": "Token throughput",
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
-          "id": 10,
+          "id": 12,
           "targets": [
-            {"expr": "sum(rate(vllm:prompt_tokens_total[1m]))", "legendFormat": "prompt tokens/s", "refId": "A"},
-            {"expr": "sum(rate(vllm:generation_tokens_total[1m]))", "legendFormat": "generation tokens/s", "refId": "B"}
+            {"expr": "sum(rate(vllm:prompt_tokens_total{model_name=~\"$model\"}[1m]))", "legendFormat": "prompt/s", "refId": "A"},
+            {"expr": "sum(rate(vllm:generation_tokens_total{model_name=~\"$model\"}[1m]))", "legendFormat": "generation/s", "refId": "B"}
           ],
           "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20, "stacking": {"mode": "normal"}}}},
           "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
@@ -125,37 +141,127 @@ data:
           "type": "timeseries",
           "title": "Request queue depth",
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
-          "id": 11,
+          "id": 13,
           "targets": [
-            {"expr": "sum(vllm:num_requests_running)", "legendFormat": "running", "refId": "A"},
-            {"expr": "sum(vllm:num_requests_waiting)", "legendFormat": "waiting", "refId": "B"},
-            {"expr": "sum(vllm:num_requests_swapped)", "legendFormat": "swapped", "refId": "C"}
+            {"expr": "sum(vllm:num_requests_running{model_name=~\"$model\"})", "legendFormat": "running", "refId": "A"},
+            {"expr": "sum(vllm:num_requests_waiting{model_name=~\"$model\"})", "legendFormat": "waiting", "refId": "B"},
+            {"expr": "sum(vllm:num_requests_swapped{model_name=~\"$model\"})", "legendFormat": "swapped", "refId": "C"}
           ],
           "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
           "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
         },
         {
           "type": "timeseries",
-          "title": "KV cache utilization and preemptions",
+          "title": "KV cache & preemptions",
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
-          "id": 12,
+          "id": 14,
           "targets": [
-            {"expr": "max(vllm:gpu_cache_usage_perc) * 100", "legendFormat": "gpu cache %", "refId": "A"},
-            {"expr": "sum(rate(vllm:num_preemptions_total[5m]))", "legendFormat": "preemptions/s", "refId": "B"}
+            {"expr": "max(vllm:gpu_cache_usage_perc{model_name=~\"$model\"}) * 100", "legendFormat": "gpu cache %", "refId": "A"},
+            {"expr": "sum(rate(vllm:num_preemptions_total{model_name=~\"$model\"}[5m]))", "legendFormat": "preemptions/s", "refId": "B"}
           ],
           "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": [{"matcher": {"id": "byName", "options": "gpu cache %"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "max", "value": 100}]}]},
           "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Prompt token length",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "id": 15,
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum(rate(vllm:request_prompt_tokens_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
+            {"expr": "histogram_quantile(0.95, sum(rate(vllm:request_prompt_tokens_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
+            {"expr": "histogram_quantile(0.99, sum(rate(vllm:request_prompt_tokens_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Generation token length",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "id": 16,
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum(rate(vllm:request_generation_tokens_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
+            {"expr": "histogram_quantile(0.95, sum(rate(vllm:request_generation_tokens_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
+            {"expr": "histogram_quantile(0.99, sum(rate(vllm:request_generation_tokens_bucket{model_name=~\"$model\"}[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Error rate",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+          "id": 17,
+          "targets": [
+            {"expr": "(sum(rate(vllm:e2e_request_latency_seconds_count{model_name=~\"$model\"}[5m])) - sum(rate(vllm:request_success_total{model_name=~\"$model\"}[5m]))) / clamp_min(sum(rate(vllm:e2e_request_latency_seconds_count{model_name=~\"$model\"}[5m])), 0.0001)", "legendFormat": "error rate", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20}, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.001}, {"color": "red", "value": 0.01}]}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Successful vs failed requests",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+          "id": 18,
+          "targets": [
+            {"expr": "sum(rate(vllm:request_success_total{model_name=~\"$model\"}[1m]))", "legendFormat": "success/s", "refId": "A"},
+            {"expr": "sum(rate(vllm:e2e_request_latency_seconds_count{model_name=~\"$model\"}[1m])) - sum(rate(vllm:request_success_total{model_name=~\"$model\"}[1m]))", "legendFormat": "failure/s", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20, "stacking": {"mode": "normal"}}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Container CPU",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 44},
+          "id": 19,
+          "targets": [{"expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"llama\", container=\"vllm\"}[1m]))", "legendFormat": "{{pod}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Container memory",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 44},
+          "id": 20,
+          "targets": [{"expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"llama\", container=\"vllm\"})", "legendFormat": "{{pod}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "logs",
+          "title": "Recent errors (Loki)",
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 52},
+          "id": 21,
+          "datasource": {"type": "loki", "uid": "loki"},
+          "targets": [{"expr": "{k8s_namespace_name=\"llama\"} |~ \"(?i)(error|traceback|exception|failed|abort)\"", "refId": "A"}],
+          "options": {"showLabels": false, "showCommonLabels": false, "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "dedupStrategy": "none", "enableLogDetails": true}
         }
       ],
       "refresh": "30s",
       "schemaVersion": 39,
       "tags": ["vllm", "llm", "inference"],
-      "templating": {"list": []},
+      "templating": {
+        "list": [
+          {
+            "name": "model",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "query": {"query": "label_values(vllm:num_requests_running, model_name)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+            "regex": "",
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "current": {"selected": true, "text": ["All"], "value": ["$__all"]},
+            "refresh": 2,
+            "sort": 1
+          }
+        ]
+      },
       "time": {"from": "now-30m", "to": "now"},
-      "timepicker": {},
       "timezone": "browser",
       "title": "vLLM inference",
       "uid": "vllm-inference",
-      "version": 1,
-      "weekStart": ""
+      "version": 2
     }

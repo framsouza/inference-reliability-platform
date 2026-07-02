@@ -4,6 +4,7 @@ vLLM serving Llama-3-8B on a single-GPU k3s node. ArgoCD does the deploys, Vault
 (dev) + ESO handle secrets.
 
 ```
+alerts/          PrometheusRule SLO + GPU alerts
 apps/            argocd Applications
 bootstrap/       argocd install + root app
 charts/llama-8b/ vllm helm chart
@@ -13,7 +14,7 @@ secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
 Sync waves: `0` gpu-operator, vault, external-secrets, kube-prometheus-stack,
-loki, tempo → `5` secrets, otel-collector, dashboards → `10` llama.
+loki, tempo → `5` secrets, otel-collector, dashboards, alerts → `10` llama.
 
 ## 1. Host
 
@@ -170,10 +171,28 @@ datasources are preconfigured; Explore → pick one.
 
 Dashboards under `dashboards/` are provisioned via ConfigMaps with the
 `grafana_dashboard: "1"` label — Grafana's sidecar picks them up automatically.
-The `vLLM inference` dashboard (TTFT / ITL / E2E latency, prompt & generation
-throughput, KV-cache utilization, queue depth, preemptions) lives at
-Dashboards → General → vLLM inference. Add more by dropping a ConfigMap into
-`dashboards/` and pushing.
+
+| Dashboard          | UID                | Panels                                                                                                                            |
+|--------------------|--------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `vLLM inference`   | `vllm-inference`   | Overview stat row, TTFT / ITL / E2E percentiles with exemplars, token throughput, queue depth, KV cache, prompt & generation length histograms, error rate, container CPU/mem, embedded Loki error log; `$model` template variable |
+| `NVIDIA GPU (DCGM)`| `nvidia-gpu-dcgm`  | SM/mem utilization, framebuffer, power, temperature, clocks, XID + ECC errors                                                     |
+
+Alerts under `alerts/` are `PrometheusRule` objects labeled `release: kps` so
+Prometheus picks them up automatically:
+
+| Rule group       | Alerts                                                                                                                                       |
+|------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `vllm.slo`       | `VLLMHighTTFT`, `VLLMHighE2ELatency`, `VLLMHighQueueDepth`, `VLLMKVCacheAlmostFull`, `VLLMHighPreemptionRate`, `VLLMPodDown`, `VLLMCrashLooping` |
+| `vllm.slo.burnrate` | `VLLMErrorBudgetBurnFast` (14.4x, 5m), `VLLMErrorBudgetBurnSlow` (1x, 1h) — targets 99.9% availability                                     |
+| `gpu.health`     | `GPUXIDError`, `GPUHighTemperature`, `GPUHighMemoryUsage`, `GPUECCDoubleBitError`, `GPUThermalThrottling`, `GPUExporterDown`                |
+
+Exemplars: Prometheus runs with `--enable-feature=exemplar-storage`. The
+Prometheus datasource is wired so exemplars on `vllm:*_seconds_bucket` panels
+link straight into Tempo. Also configured: Tempo → Logs (via Loki
+`derivedFields`) and Loki → Traces (via `trace_id` derived field).
+
+Adding more: drop a ConfigMap into `dashboards/` or a `PrometheusRule` into
+`alerts/` — both dirs are watched by their respective ArgoCD Applications.
 
 Sanity checks:
 

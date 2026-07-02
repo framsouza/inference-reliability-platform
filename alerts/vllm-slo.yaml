@@ -1,0 +1,116 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vllm-slo
+  namespace: monitoring
+  labels:
+    release: kps
+spec:
+  groups:
+    - name: vllm.slo
+      interval: 30s
+      rules:
+        - alert: VLLMHighTTFT
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le, model_name) (rate(vllm:time_to_first_token_seconds_bucket[5m]))
+            ) > 2
+          for: 10m
+          labels:
+            severity: warning
+            slo: ttft
+          annotations:
+            summary: "vLLM TTFT p95 > 2s ({{ $labels.model_name }})"
+            description: "Time-to-first-token p95 for {{ $labels.model_name }} is {{ $value | humanizeDuration }} over 10m."
+        - alert: VLLMHighE2ELatency
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le, model_name) (rate(vllm:e2e_request_latency_seconds_bucket[5m]))
+            ) > 10
+          for: 10m
+          labels:
+            severity: warning
+            slo: e2e_latency
+          annotations:
+            summary: "vLLM E2E p95 > 10s ({{ $labels.model_name }})"
+            description: "End-to-end request latency p95 for {{ $labels.model_name }} is {{ $value | humanizeDuration }}."
+        - alert: VLLMHighQueueDepth
+          expr: sum(vllm:num_requests_waiting) > 20
+          for: 5m
+          labels:
+            severity: warning
+            slo: saturation
+          annotations:
+            summary: "vLLM queue depth > 20"
+            description: "{{ $value }} requests waiting; the server is saturated."
+        - alert: VLLMKVCacheAlmostFull
+          expr: max(vllm:gpu_cache_usage_perc) > 0.95
+          for: 5m
+          labels:
+            severity: warning
+            slo: kv_cache
+          annotations:
+            summary: "vLLM KV cache > 95%"
+            description: "KV cache utilization is {{ $value | humanizePercentage }}. Requests will start getting preempted or rejected."
+        - alert: VLLMHighPreemptionRate
+          expr: sum(rate(vllm:num_preemptions_total[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            slo: preemption
+          annotations:
+            summary: "vLLM preempting requests"
+            description: "Preemption rate is {{ $value }} req/s. Increase --gpu-memory-utilization or scale out."
+        - alert: VLLMPodDown
+          expr: |
+            (kube_deployment_status_replicas_ready{namespace="llama", deployment="llama-llama-8b"}
+             / kube_deployment_status_replicas{namespace="llama", deployment="llama-llama-8b"}) < 1
+          for: 5m
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "vLLM deployment has unready replicas"
+            description: "Ready ratio: {{ $value }}."
+        - alert: VLLMCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total{namespace="llama"}[15m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "vLLM pod restarting"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} restarted in the last 15m."
+    - name: vllm.slo.burnrate
+      interval: 30s
+      rules:
+        - alert: VLLMErrorBudgetBurnFast
+          expr: |
+            (
+              sum(rate(vllm:e2e_request_latency_seconds_count[5m]))
+              - sum(rate(vllm:request_success_total[5m]))
+            )
+            /
+            clamp_min(sum(rate(vllm:e2e_request_latency_seconds_count[5m])), 1) > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "vLLM burning error budget fast (14.4x rate)"
+            description: "Availability below 99.9% SLO — burn rate 14.4x over 5m."
+        - alert: VLLMErrorBudgetBurnSlow
+          expr: |
+            (
+              sum(rate(vllm:e2e_request_latency_seconds_count[1h]))
+              - sum(rate(vllm:request_success_total[1h]))
+            )
+            /
+            clamp_min(sum(rate(vllm:e2e_request_latency_seconds_count[1h])), 1) > (1 * 0.001)
+          for: 30m
+          labels:
+            severity: warning
+            slo: availability
+          annotations:
+            summary: "vLLM burning error budget slowly"
+            description: "Sustained 1x burn rate over 1h."

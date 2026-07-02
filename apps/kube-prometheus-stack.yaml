@@ -28,7 +28,9 @@ spec:
             enableRemoteWriteReceiver: true
             enableFeatures:
               - remote-write-receiver
+              - exemplar-storage
             retention: 6h
+            enableAdminAPI: true
             resources:
               requests:
                 cpu: 100m
@@ -52,15 +54,36 @@ spec:
             datasources:
               enabled: true
               searchNamespace: ALL
+          datasources:
+            datasources.yaml:
+              apiVersion: 1
+              datasources:
+                - name: Prometheus
+                  type: prometheus
+                  uid: prometheus
+                  access: proxy
+                  url: http://kps-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+                  isDefault: true
+                  jsonData:
+                    exemplarTraceIdDestinations:
+                      - name: trace_id
+                        datasourceUid: tempo
           additionalDataSources:
             - name: Loki
               type: loki
+              uid: loki
               access: proxy
               url: http://loki-gateway.monitoring.svc.cluster.local
               jsonData:
                 maxLines: 1000
+                derivedFields:
+                  - name: trace_id
+                    matcherRegex: '"trace_id":"(\w+)"'
+                    url: '${__value.raw}'
+                    datasourceUid: tempo
             - name: Tempo
               type: tempo
+              uid: tempo
               access: proxy
               url: http://tempo.monitoring.svc.cluster.local:3100
               jsonData:
@@ -68,6 +91,15 @@ spec:
                   datasourceUid: prometheus
                 tracesToLogsV2:
                   datasourceUid: loki
+                  filterByTraceID: true
+                  tags:
+                    - key: service.name
+                      value: service
+                tracesToMetrics:
+                  datasourceUid: prometheus
+                  tags:
+                    - key: service.name
+                      value: service
         kubeStateMetrics:
           enabled: true
         nodeExporter:
