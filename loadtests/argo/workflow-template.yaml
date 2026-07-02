@@ -1,0 +1,71 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: vllm-bench
+  namespace: argo
+spec:
+  entrypoint: bench
+  serviceAccountName: argo-workflow
+  ttlStrategy:
+    secondsAfterCompletion: 3600
+  podGC:
+    strategy: OnWorkflowSuccess
+  arguments:
+    parameters:
+      - name: scenario
+        value: baseline
+      - name: model
+        value: meta-llama/Meta-Llama-3-8B-Instruct
+      - name: base-url
+        value: http://llama-llama-8b.llama.svc.cluster.local:8000
+      - name: dataset
+        value: random
+      - name: num-prompts
+        value: "200"
+      - name: request-rate
+        value: "5"
+      - name: input-len
+        value: "512"
+      - name: output-len
+        value: "128"
+      - name: seed
+        value: "42"
+      - name: image
+        value: vllm/vllm-openai:v0.9.2
+  templates:
+    - name: bench
+      inputs:
+        parameters:
+          - {name: scenario}
+          - {name: model}
+          - {name: base-url}
+          - {name: dataset}
+          - {name: num-prompts}
+          - {name: request-rate}
+          - {name: input-len}
+          - {name: output-len}
+          - {name: seed}
+          - {name: image}
+      container:
+        image: "{{inputs.parameters.image}}"
+        command: [/bin/bash, -c]
+        args:
+          - |
+            set -euo pipefail
+            echo ">>> scenario={{inputs.parameters.scenario}} rate={{inputs.parameters.request-rate}} prompts={{inputs.parameters.num-prompts}} in={{inputs.parameters.input-len}} out={{inputs.parameters.output-len}} dataset={{inputs.parameters.dataset}}"
+            exec vllm bench serve \
+              --backend openai-chat \
+              --model "{{inputs.parameters.model}}" \
+              --base-url "{{inputs.parameters.base-url}}" \
+              --endpoint /v1/chat/completions \
+              --dataset-name {{inputs.parameters.dataset}} \
+              --num-prompts {{inputs.parameters.num-prompts}} \
+              --request-rate {{inputs.parameters.request-rate}} \
+              --random-input-len {{inputs.parameters.input-len}} \
+              --random-output-len {{inputs.parameters.output-len}} \
+              --seed {{inputs.parameters.seed}} \
+              --percentile-metrics ttft,tpot,itl,e2el \
+              --metric-percentiles 50,90,95,99
+        resources:
+          requests: {cpu: "500m", memory: "1Gi"}
+          limits:   {cpu: "2",    memory: "4Gi"}
