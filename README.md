@@ -7,12 +7,13 @@ vLLM serving Llama-3-8B on a single-GPU k3s node. ArgoCD does the deploys, Vault
 apps/            argocd Applications
 bootstrap/       argocd install + root app
 charts/llama-8b/ vllm helm chart
+dashboards/      grafana dashboard ConfigMaps
 gpu-operator/    gpu-operator values
 secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
 Sync waves: `0` gpu-operator, vault, external-secrets, kube-prometheus-stack,
-loki, tempo → `5` secrets, otel-collector → `10` llama.
+loki, tempo → `5` secrets, otel-collector, dashboards → `10` llama.
 
 ## 1. Host
 
@@ -166,6 +167,13 @@ kubectl -n monitoring port-forward --address 0.0.0.0 svc/kps-grafana 3000:80
 
 Expose `3000` in Brev, login `admin` / `admin`. Prometheus, Loki, and Tempo
 datasources are preconfigured; Explore → pick one.
+
+Dashboards under `dashboards/` are provisioned via ConfigMaps with the
+`grafana_dashboard: "1"` label — Grafana's sidecar picks them up automatically.
+The `vLLM inference` dashboard (TTFT / ITL / E2E latency, prompt & generation
+throughput, KV-cache utilization, queue depth, preemptions) lives at
+Dashboards → General → vLLM inference. Add more by dropping a ConfigMap into
+`dashboards/` and pushing.
 
 Sanity checks:
 
