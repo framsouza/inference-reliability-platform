@@ -1,0 +1,32 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mutate-workflow-ttl
+  annotations:
+    policies.kyverno.io/title: "Default TTL on Argo Workflows"
+    policies.kyverno.io/category: Argo
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/description: >-
+      Workflows submitted without ttlStrategy accumulate in etcd. Default them
+      to 1h auto-cleanup after completion so ad-hoc runs don't build up over
+      time.
+spec:
+  admission: true
+  background: false
+  failurePolicy: Ignore
+  rules:
+    - name: default-ttl-strategy
+      match:
+        any:
+          - resources:
+              kinds: [argoproj.io/v1alpha1/Workflow]
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.ttlStrategy || '' }}"
+            operator: Equals
+            value: ""
+      mutate:
+        patchStrategicMerge:
+          spec:
+            ttlStrategy:
+              secondsAfterCompletion: 3600

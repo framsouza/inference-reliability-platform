@@ -1,0 +1,31 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mutate-nvidia-runtime-class
+  annotations:
+    policies.kyverno.io/title: "Ensure runtimeClassName: nvidia on GPU pods"
+    policies.kyverno.io/category: GPU
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Pods that request nvidia.com/gpu must run under the `nvidia` RuntimeClass;
+      otherwise the container runtime cannot resolve the GPU device and pods
+      fail with `unknown device` or `unresolvable CDI devices`.
+spec:
+  admission: true
+  background: false
+  failurePolicy: Ignore
+  rules:
+    - name: add-nvidia-runtime-class
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      preconditions:
+        all:
+          - key: "{{ length(request.object.spec.containers[?resources.limits.\"nvidia.com/gpu\"]) }}"
+            operator: GreaterThan
+            value: 0
+      mutate:
+        patchStrategicMerge:
+          spec:
+            runtimeClassName: nvidia

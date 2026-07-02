@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  source:
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    targetRevision: 3.3.0
+    helm:
+      releaseName: kyverno
+      values: |
+        crds:
+          install: true
+        admissionController:
+          replicas: 1
+        backgroundController:
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+        reportsController:
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+        cleanupController:
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+        webhooksCleanup:
+          enabled: true
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

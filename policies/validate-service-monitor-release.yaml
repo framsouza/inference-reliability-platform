@@ -1,0 +1,32 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-service-monitor-release
+  annotations:
+    policies.kyverno.io/title: "ServiceMonitors need release: kps label"
+    policies.kyverno.io/category: Observability
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      kube-prometheus-stack's Prometheus uses serviceMonitorSelector to pick up
+      only ServiceMonitors labelled `release: kps`. Without the label the
+      target is defined but never scraped, so the failure is silent.
+spec:
+  admission: true
+  background: true
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  rules:
+    - name: require-release-label
+      match:
+        any:
+          - resources:
+              kinds: [ServiceMonitor]
+      validate:
+        message: >-
+          ServiceMonitor "{{ request.object.metadata.name }}" in ns
+          "{{ request.object.metadata.namespace }}" is missing the label
+          `release: kps`. kube-prometheus-stack will not scrape it.
+        pattern:
+          metadata:
+            labels:
+              release: kps

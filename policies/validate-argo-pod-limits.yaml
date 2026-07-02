@@ -1,0 +1,35 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-argo-pod-limits
+  annotations:
+    policies.kyverno.io/title: "Argo pods must set resource limits"
+    policies.kyverno.io/category: Argo
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Load-test pods without cpu/memory limits can saturate the single-node
+      cluster and starve the vLLM server. Require both on every container in
+      the `argo` namespace.
+spec:
+  admission: true
+  background: true
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  rules:
+    - name: require-limits-in-argo
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [argo]
+      validate:
+        message: >-
+          Pod "{{ request.object.metadata.name }}" in ns argo has a container
+          missing cpu or memory `resources.limits`. Set both.
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
