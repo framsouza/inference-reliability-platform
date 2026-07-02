@@ -29,13 +29,21 @@ spec:
                 opentelemetry-sdk \
                 opentelemetry-exporter-otlp \
                 opentelemetry-semantic-conventions
-              exec python3 -m vllm.entrypoints.openai.api_server \
-                --model "{{ .Values.model }}" \
+              args=(
+                --model "{{ .Values.model }}"
+                {{- if .Values.enablePrefixCaching }}
+                --enable-prefix-caching
+                {{- end }}
                 --otlp-traces-endpoint "{{ .Values.otlp.tracesEndpoint }}"
+              )
+              exec python3 -m vllm.entrypoints.openai.api_server "${args[@]}"
           {{- else }}
           args:
             - --model
             - "{{ .Values.model }}"
+            {{- if .Values.enablePrefixCaching }}
+            - --enable-prefix-caching
+            {{- end }}
             {{- if .Values.otlp.tracesEndpoint }}
             - --otlp-traces-endpoint
             - "{{ .Values.otlp.tracesEndpoint }}"

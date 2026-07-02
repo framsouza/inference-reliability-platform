@@ -3,6 +3,8 @@ model: meta-llama/Meta-Llama-3-8B-Instruct
 image: vllm/vllm-openai:v0.7.3
 gpu: 1
 
+enablePrefixCaching: false
+
 service:
   type: ClusterIP
   port: 8000
