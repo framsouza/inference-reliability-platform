@@ -147,6 +147,41 @@ kubectl run dcgm-diag --rm -it --restart=Never \
   --overrides='{"spec":{"runtimeClassName":"nvidia","containers":[{"name":"dcgm-diag","image":"nvcr.io/nvidia/cloud-native/dcgm:3.3.5-1-ubuntu22.04","command":["dcgmi","diag","-r","2"],"resources":{"limits":{"nvidia.com/gpu":1}}}]}}'
 ```
 
+## Brev launchable ports
+
+When published as a Brev launchable, expose these ports in the launchable
+definition and Brev's port publisher routes them to the pods behind matching
+`kubectl port-forward` sessions:
+
+| Port | Service                                  | Namespace    | What it is                                        |
+|------|------------------------------------------|--------------|---------------------------------------------------|
+| 8000 | `llama-llama-8b`                         | `llama`      | vLLM OpenAI-compatible API (`/v1/chat/completions`) |
+| 8080 | `argocd-server`                          | `argocd`     | ArgoCD UI — GitOps sync state                     |
+| 3000 | `kps-grafana`                            | `monitoring` | Grafana — dashboards, Explore (Loki + Tempo)      |
+| 9090 | `kps-kube-prometheus-stack-prometheus`   | `monitoring` | Prometheus UI — raw PromQL, targets, alerts       |
+| 2746 | `argo-workflows-server`                  | `argo`       | Argo Workflows UI — load-test runs (`vllm-bench`) |
+
+Port-forward each (`--address 0.0.0.0` so Brev's port publisher can reach the
+process from outside the loopback):
+
+```bash
+kubectl -n llama      port-forward --address 0.0.0.0 svc/llama-llama-8b                       8000:8000
+kubectl -n argocd     port-forward --address 0.0.0.0 svc/argocd-server                        8080:80
+kubectl -n monitoring port-forward --address 0.0.0.0 svc/kps-grafana                          3000:80
+kubectl -n monitoring port-forward --address 0.0.0.0 svc/kps-kube-prometheus-stack-prometheus 9090:9090
+kubectl -n argo       port-forward --address 0.0.0.0 svc/argo-workflows-server                2746:2746
+```
+
+Default credentials — all unauthenticated except ArgoCD:
+
+| Service         | Login                                                                                                    |
+|-----------------|----------------------------------------------------------------------------------------------------------|
+| ArgoCD          | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
+| Grafana         | `admin` / `admin`                                                                                        |
+| Prometheus      | no auth                                                                                                  |
+| Argo Workflows  | no auth (chart deployed with `--auth-mode=server`)                                                       |
+| vLLM            | no auth (OpenAI-compatible; add an API key gateway if this ever leaves the launchable)                   |
+
 ## Observability
 
 All in the `monitoring` namespace:
