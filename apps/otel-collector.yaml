@@ -97,10 +97,6 @@ spec:
                 enabled: true
                 num_consumers: 5
                 queue_size: 5000
-              external_labels:
-                cluster: brev
-              resource_to_telemetry_conversion:
-                enabled: false
           service:
             pipelines:
               traces:

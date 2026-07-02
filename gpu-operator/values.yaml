@@ -10,6 +10,9 @@ devicePlugin:
       value: volume-mounts
 dcgmExporter:
   enabled: true
+  repository: nvcr.io/nvidia/k8s
+  image: dcgm-exporter
+  version: 3.3.9-3.6.1-ubuntu22.04
   serviceMonitor:
     enabled: true
     interval: 15s
