@@ -54,6 +54,7 @@ spec:
             datasources:
               enabled: true
               searchNamespace: ALL
+              defaultDatasourceEnabled: false
           datasources:
             datasources.yaml:
               apiVersion: 1

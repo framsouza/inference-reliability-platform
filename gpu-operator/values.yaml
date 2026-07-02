@@ -13,6 +13,7 @@ dcgmExporter:
   repository: nvcr.io/nvidia/k8s
   image: dcgm-exporter
   version: 3.3.9-3.6.1-ubuntu22.04
+  imagePullPolicy: IfNotPresent
   serviceMonitor:
     enabled: true
     interval: 15s
