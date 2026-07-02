@@ -87,7 +87,6 @@ spec:
               endpoint: http://kps-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
               tls:
                 insecure: true
-              sending_queue: null
           service:
             pipelines:
               traces:
