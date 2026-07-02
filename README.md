@@ -9,7 +9,6 @@ apps/            argocd Applications
 bootstrap/       argocd install + root app
 charts/llama-8b/ vllm helm chart
 dashboards/      grafana dashboard ConfigMaps
-gpu-operator/    gpu-operator values
 secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
@@ -220,9 +219,11 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ## Notes
 
-- `gpu-operator/values.yaml` disables the operator-managed driver + toolkit
-  (host handles both) and disables CDI. CDI segfaults on driver <570; flip
-  `cdi.enabled: true` and drop `DEVICE_LIST_STRATEGY` once you're on 570+.
+- Inline values in `apps/gpu-operator.yaml` disable the operator-managed driver
+  and toolkit (host handles both) and disable CDI. CDI segfaults on driver <570;
+  flip `cdi.enabled: true` and drop `DEVICE_LIST_STRATEGY` once you're on 570+.
+  DCGM exporter is pinned to `3.3.9-3.6.1-ubuntu22.04` for the same reason
+  (newer DCGM 4.x images need driver 570+).
 - `charts/llama-8b/values.yaml` pins `vllm/vllm-openai:v0.7.3` because newer
   vLLM images (v0.9+) ship PyTorch built against CUDA 12.8, which needs driver
   570+. On driver 570+ you can bump the tag to `latest`.

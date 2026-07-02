@@ -10,17 +10,33 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gpu-operator
-  sources:
-    - repoURL: https://helm.ngc.nvidia.com/nvidia
-      chart: gpu-operator
-      targetRevision: v24.9.0
-      helm:
-        releaseName: gpu-operator
-        valueFiles:
-          - $values/gpu-operator/values.yaml
-    - repoURL: https://github.com/framsouza/nvidia-brev-vllm.git
-      targetRevision: main
-      ref: values
+  source:
+    repoURL: https://helm.ngc.nvidia.com/nvidia
+    chart: gpu-operator
+    targetRevision: v24.9.0
+    helm:
+      releaseName: gpu-operator
+      values: |
+        driver:
+          enabled: false
+        toolkit:
+          enabled: false
+        cdi:
+          enabled: false
+        devicePlugin:
+          env:
+            - name: DEVICE_LIST_STRATEGY
+              value: volume-mounts
+        dcgmExporter:
+          enabled: true
+          repository: nvcr.io/nvidia/k8s
+          image: dcgm-exporter
+          version: 3.3.9-3.6.1-ubuntu22.04
+          imagePullPolicy: IfNotPresent
+          serviceMonitor:
+            enabled: true
+            interval: 15s
+            honorLabels: false
   syncPolicy:
     automated:
       prune: true
