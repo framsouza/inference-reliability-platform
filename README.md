@@ -11,7 +11,8 @@ gpu-operator/    gpu-operator values
 secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
-Sync waves: `0` gpu-operator, vault, external-secrets → `5` secrets → `10` llama.
+Sync waves: `0` gpu-operator, vault, external-secrets, kube-prometheus-stack,
+loki, tempo → `5` secrets, promtail → `10` llama.
 
 ## 1. Host
 
@@ -127,6 +128,32 @@ kubectl run dcgm-diag --rm -it --restart=Never \
   --image=nvcr.io/nvidia/cloud-native/dcgm:3.3.5-1-ubuntu22.04 \
   --overrides='{"spec":{"runtimeClassName":"nvidia","containers":[{"name":"dcgm-diag","image":"nvcr.io/nvidia/cloud-native/dcgm:3.3.5-1-ubuntu22.04","command":["dcgmi","diag","-r","2"],"resources":{"limits":{"nvidia.com/gpu":1}}}]}}'
 ```
+
+## Observability
+
+Stack (all in `monitoring` namespace):
+
+| Component               | Chart                                | Purpose                    |
+|-------------------------|--------------------------------------|----------------------------|
+| kube-prometheus-stack   | prometheus-community/kube-prometheus-stack | metrics + Grafana + alertmanager |
+| loki                    | grafana/loki                         | logs                       |
+| promtail                | grafana/promtail                     | log shipping to loki       |
+| tempo                   | grafana/tempo                        | traces (OTLP 4317/4318)    |
+
+Grafana is preconfigured with Prometheus, Loki, and Tempo datasources. Access:
+
+```bash
+kubectl -n monitoring port-forward --address 0.0.0.0 svc/kps-grafana 3000:80
+```
+
+Expose `3000` in Brev, login `admin` / `admin`.
+
+To ship traces from vLLM into Tempo, point the OTLP exporter at
+`http://tempo.monitoring.svc.cluster.local:4318`.
+
+To scrape vLLM's `/metrics`, add a `ServiceMonitor` targeting the llama Service
+in the `llama` namespace — Prometheus is configured to pick up ServiceMonitors
+in any namespace.
 
 ## Notes
 

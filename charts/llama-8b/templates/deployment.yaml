@@ -5,6 +5,8 @@ metadata:
   labels: {{- include "llama.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicas }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels: {{- include "llama.selectorLabels" . | nindent 6 }}
   template:
