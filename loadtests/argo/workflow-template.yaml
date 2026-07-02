@@ -53,7 +53,11 @@ spec:
           - |
             set -euo pipefail
             echo ">>> scenario={{inputs.parameters.scenario}} rate={{inputs.parameters.request-rate}} prompts={{inputs.parameters.num-prompts}} in={{inputs.parameters.input-len}} out={{inputs.parameters.output-len}} dataset={{inputs.parameters.dataset}}"
-            exec vllm bench serve \
+            apt-get update -qq
+            apt-get install -qq -y --no-install-recommends git >/dev/null
+            git clone --depth 1 --branch v0.9.2 https://github.com/vllm-project/vllm.git /tmp/vllm
+            cd /tmp/vllm/benchmarks
+            exec python3 benchmark_serving.py \
               --backend openai-chat \
               --model "{{inputs.parameters.model}}" \
               --base-url "{{inputs.parameters.base-url}}" \
