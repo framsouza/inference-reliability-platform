@@ -85,10 +85,22 @@ spec:
               endpoint: http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push
             prometheusremotewrite:
               endpoint: http://kps-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
+              timeout: 30s
               tls:
                 insecure: true
-              resource_to_telemetry_conversion:
+              retry_on_failure:
                 enabled: true
+                initial_interval: 5s
+                max_interval: 30s
+                max_elapsed_time: 5m
+              sending_queue:
+                enabled: true
+                num_consumers: 5
+                queue_size: 5000
+              external_labels:
+                cluster: brev
+              resource_to_telemetry_conversion:
+                enabled: false
           service:
             pipelines:
               traces:
