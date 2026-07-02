@@ -95,7 +95,7 @@ spec:
                 exporters: [otlp/tempo]
               metrics:
                 receivers: [otlp, prometheus]
-                processors: [memory_limiter, k8sattributes, resource, batch]
+                processors: [memory_limiter, resource, batch]
                 exporters: [prometheusremotewrite]
               logs:
                 receivers: [otlp, filelog]
