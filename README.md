@@ -133,6 +133,9 @@ kubectl run dcgm-diag --rm -it --restart=Never \
 - `gpu-operator/values.yaml` disables the operator-managed driver + toolkit
   (host handles both) and disables CDI. CDI segfaults on driver <570; flip
   `cdi.enabled: true` and drop `DEVICE_LIST_STRATEGY` once you're on 570+.
+- `charts/llama-8b/values.yaml` pins `vllm/vllm-openai:v0.7.3` because newer
+  vLLM images (v0.9+) ship PyTorch built against CUDA 12.8, which needs driver
+  570+. On driver 570+ you can bump the tag to `latest`.
 - Vault dev mode is in-memory. Every vault pod restart = re-seed. For anything
   beyond a dev box: switch to `server.standalone.enabled: true` with a PVC,
   drop the static root token, use k8s auth, delete `secrets/vault-token.yaml`.
