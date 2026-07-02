@@ -71,6 +71,15 @@ spec:
               --seed {{inputs.parameters.seed}} \
               --percentile-metrics ttft,tpot,itl,e2el \
               --metric-percentiles 50,90,95,99
+        env:
+          - name: HUGGING_FACE_HUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-token
+                key: token
+                optional: false
+          - name: HF_HUB_ENABLE_HF_TRANSFER
+            value: "0"
         resources:
           requests: {cpu: "500m", memory: "1Gi"}
           limits:   {cpu: "2",    memory: "4Gi"}
