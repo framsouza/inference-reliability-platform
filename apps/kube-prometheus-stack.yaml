@@ -47,6 +47,12 @@ spec:
           service:
             type: ClusterIP
           defaultDashboardsEnabled: true
+          env:
+            GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+          grafana.ini:
+            server:
+              root_url: "%(protocol)s://%(domain)s/grafana/"
+              serve_from_sub_path: true
           sidecar:
             dashboards:
               enabled: true

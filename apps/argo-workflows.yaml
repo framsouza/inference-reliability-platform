@@ -30,6 +30,7 @@ spec:
             - server
           extraArgs:
             - --auth-mode=server
+            - --base-href=/argo/
           resources:
             requests: {cpu: 50m, memory: 128Mi}
           serviceType: ClusterIP

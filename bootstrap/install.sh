@@ -26,7 +26,7 @@ kubectl apply -n argocd \
 kubectl -n argocd rollout status deploy/argocd-server --timeout=5m
 
 kubectl -n argocd patch configmap argocd-cmd-params-cm \
-  --type merge -p '{"data":{"controller.diff.server.side":"true","server.insecure":"true"}}'
+  --type merge -p '{"data":{"controller.diff.server.side":"true","server.insecure":"true","server.rootpath":"/argocd","server.basehref":"/argocd"}}'
 kubectl -n argocd patch configmap argocd-cm \
   --type merge -p '{"data":{"timeout.reconciliation":"30s"}}'
 kubectl -n argocd rollout restart deploy/argocd-server

@@ -147,29 +147,60 @@ kubectl run dcgm-diag --rm -it --restart=Never \
   --overrides='{"spec":{"runtimeClassName":"nvidia","containers":[{"name":"dcgm-diag","image":"nvcr.io/nvidia/cloud-native/dcgm:3.3.5-1-ubuntu22.04","command":["dcgmi","diag","-r","2"],"resources":{"limits":{"nvidia.com/gpu":1}}}]}}'
 ```
 
-## Brev launchable ports
+## Gateway
 
-When published as a Brev launchable, expose these ports in the launchable
-definition and Brev's port publisher routes them to the pods behind matching
-`kubectl port-forward` sessions:
+All UIs and the vLLM API are exposed behind a single **kgateway** Gateway API
+Gateway (`gateway/public`), listener HTTP:80. Path-based routing —
+`http://<node-ip>/<prefix>`:
 
-| Port | Service                                  | Namespace    | What it is                                        |
-|------|------------------------------------------|--------------|---------------------------------------------------|
-| 8000 | `llama-llama-8b`                         | `llama`      | vLLM OpenAI-compatible API (`/v1/chat/completions`) |
-| 8080 | `argocd-server`                          | `argocd`     | ArgoCD UI — GitOps sync state                     |
-| 3000 | `kps-grafana`                            | `monitoring` | Grafana — dashboards, Explore (Loki + Tempo)      |
-| 9090 | `kps-kube-prometheus-stack-prometheus`   | `monitoring` | Prometheus UI — raw PromQL, targets, alerts       |
-| 2746 | `argo-workflows-server`                  | `argo`       | Argo Workflows UI — load-test runs (`vllm-bench`) |
+| Path       | Service                       | HTTPRoute (`httproutes/`) | Purpose                             |
+|------------|-------------------------------|---------------------------|-------------------------------------|
+| `/v1`      | `llama-llama-8b` (llama)      | `vllm.yaml`               | vLLM OpenAI API                     |
+| `/argocd`  | `argocd-server` (argocd)      | `argocd.yaml`             | ArgoCD UI                           |
+| `/grafana` | `kps-grafana` (monitoring)    | `grafana.yaml`            | Grafana — dashboards + Explore      |
+| `/argo`    | `argo-workflows-server` (argo)| `argo-workflows.yaml`     | Argo Workflows UI — load-test runs  |
 
-Port-forward each (`--address 0.0.0.0` so Brev's port publisher can reach the
-process from outside the loopback):
+Sync-wave order: gateway-api-crds `-6` → kgateway-crds `-5` → kgateway `-4` →
+gateway `-2` → httproutes `11` (after backends exist).
+
+The three UIs are configured to serve from their path prefix — no URLRewrite:
+
+- **ArgoCD**: `server.rootpath: /argocd` + `server.basehref: /argocd` patched
+  into `argocd-cmd-params-cm` by `bootstrap/install.sh`.
+- **Grafana**: `serve_from_sub_path: true` + `root_url: "%(protocol)s://%(domain)s/grafana/"`
+  in `apps/kube-prometheus-stack.yaml`.
+- **Argo Workflows server**: `--base-href=/argo/` in `apps/argo-workflows.yaml`.
+
+To add a new backend, drop an HTTPRoute in `httproutes/` referencing
+`parentRefs: [{name: public, namespace: gateway, sectionName: http}]`.
+
+### Brev launchable ports
+
+Only **port 80** needs to be exposed — Brev's port publisher can proxy it to
+the Gateway's LoadBalancer Service (`kubectl -n gateway get svc` shows the
+kgateway-managed LB Service, usually `public`). Point Brev at that Service on
+port 80:
 
 ```bash
-kubectl -n llama      port-forward --address 0.0.0.0 svc/llama-llama-8b                       8000:8000
-kubectl -n argocd     port-forward --address 0.0.0.0 svc/argocd-server                        8080:80
-kubectl -n monitoring port-forward --address 0.0.0.0 svc/kps-grafana                          3000:80
+kubectl -n gateway port-forward --address 0.0.0.0 svc/public 80:80
+```
+
+Then in a browser: `http://<node-ip>/argocd`, `/grafana`, `/argo`. Or hit the
+model:
+
+```bash
+curl -X POST http://<node-ip>/v1/chat/completions \
+  -H "content-type: application/json" \
+  -d '{"model":"meta-llama/Meta-Llama-3-8B-Instruct","messages":[{"role":"user","content":"hi"}]}'
+```
+
+### Direct port-forward (bypass Gateway, dev only)
+
+Useful when the Gateway isn't wired up yet, or for Prometheus which isn't
+routed (has no auth):
+
+```bash
 kubectl -n monitoring port-forward --address 0.0.0.0 svc/kps-kube-prometheus-stack-prometheus 9090:9090
-kubectl -n argo       port-forward --address 0.0.0.0 svc/argo-workflows-server                2746:2746
 ```
 
 Default credentials — all unauthenticated except ArgoCD:
