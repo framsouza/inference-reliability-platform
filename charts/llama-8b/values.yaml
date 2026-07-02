@@ -10,3 +10,7 @@ service:
 hfToken:
   value: ""
   existingSecret: hf-token
+
+otlp:
+  tracesEndpoint: http://otel-collector.monitoring.svc.cluster.local:4318
+  serviceName: vllm

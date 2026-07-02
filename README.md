@@ -12,7 +12,7 @@ secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
 Sync waves: `0` gpu-operator, vault, external-secrets, kube-prometheus-stack,
-loki, tempo → `5` secrets, promtail → `10` llama.
+loki, tempo → `5` secrets, otel-collector → `10` llama.
 
 ## 1. Host
 
@@ -99,9 +99,11 @@ kubectl -n llama get externalsecret,secret,pods
 ### ArgoCD UI on Brev
 
 `bootstrap/install.sh` already patches `argocd-cmd-params-cm` with
-`server.insecure: "true"` (Brev's port publisher is HTTP-only) and
+`server.insecure: "true"` (Brev's port publisher is HTTP-only),
 `controller.diff.server.side: "true"` (avoids `terminatingReplicas: field not
-declared in schema` on k8s ≥1.33). Port-forward on port 80:
+declared in schema` on k8s ≥1.33), and sets `timeout.reconciliation: 30s` in
+`argocd-cm` so a git push turns into a sync within ~30 seconds instead of the
+default 3 minutes. Port-forward on port 80:
 
 ```bash
 kubectl -n argocd port-forward --address 0.0.0.0 svc/argocd-server 8080:80
@@ -112,11 +114,13 @@ Expose port `8080` in the Brev UI, then hit the Brev-provided URL over
 (printed by `bootstrap/install.sh`, or `kubectl -n argocd get secret
 argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`).
 
-If you bootstrapped before this patch was added, run it manually:
+If you bootstrapped before these patches were added, run them manually:
 
 ```bash
 kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
   -p '{"data":{"controller.diff.server.side":"true","server.insecure":"true"}}'
+kubectl -n argocd patch configmap argocd-cm --type merge \
+  -p '{"data":{"timeout.reconciliation":"30s"}}'
 kubectl -n argocd rollout restart deploy/argocd-server
 kubectl -n argocd rollout restart statefulset/argocd-application-controller
 ```
@@ -131,29 +135,48 @@ kubectl run dcgm-diag --rm -it --restart=Never \
 
 ## Observability
 
-Stack (all in `monitoring` namespace):
+All in the `monitoring` namespace:
 
-| Component               | Chart                                | Purpose                    |
-|-------------------------|--------------------------------------|----------------------------|
-| kube-prometheus-stack   | prometheus-community/kube-prometheus-stack | metrics + Grafana + alertmanager |
-| loki                    | grafana/loki                         | logs                       |
-| promtail                | grafana/promtail                     | log shipping to loki       |
-| tempo                   | grafana/tempo                        | traces (OTLP 4317/4318)    |
+| Component               | Chart                                | Purpose                                     |
+|-------------------------|--------------------------------------|---------------------------------------------|
+| kube-prometheus-stack   | prometheus-community/kube-prometheus-stack | Prometheus (with remote-write receiver) + Grafana + alertmanager |
+| loki                    | grafana/loki                         | log store                                   |
+| tempo                   | grafana/tempo                        | trace store                                 |
+| otel-collector          | open-telemetry/opentelemetry-collector | DaemonSet: OTLP + filelog + prometheus receivers; exports to tempo/loki/prometheus |
 
-Grafana is preconfigured with Prometheus, Loki, and Tempo datasources. Access:
+Signal flow:
+
+```
+vLLM ── OTLP traces ──▶ otel-collector ── OTLP ─▶ tempo
+vLLM /metrics ─ scrape ▶ otel-collector ─ remote_write ▶ prometheus
+pod stdout/stderr ────▶ otel-collector (filelog) ── push ▶ loki
+kube-state / node-exporter / cadvisor ── scrape ▶ prometheus
+```
+
+vLLM tracing is wired via chart values (`otlp.tracesEndpoint`) which set both
+`--otlp-traces-endpoint` and `OTEL_EXPORTER_OTLP_ENDPOINT`. Every span is
+enriched with `service.name=vllm`, k8s attributes (pod, namespace, node), and
+`cluster=brev`.
+
+Grafana access:
 
 ```bash
 kubectl -n monitoring port-forward --address 0.0.0.0 svc/kps-grafana 3000:80
 ```
 
-Expose `3000` in Brev, login `admin` / `admin`.
+Expose `3000` in Brev, login `admin` / `admin`. Prometheus, Loki, and Tempo
+datasources are preconfigured; Explore → pick one.
 
-To ship traces from vLLM into Tempo, point the OTLP exporter at
-`http://tempo.monitoring.svc.cluster.local:4318`.
+Sanity checks:
 
-To scrape vLLM's `/metrics`, add a `ServiceMonitor` targeting the llama Service
-in the `llama` namespace — Prometheus is configured to pick up ServiceMonitors
-in any namespace.
+```bash
+kubectl -n monitoring get pods
+kubectl -n monitoring logs -l app.kubernetes.io/name=opentelemetry-collector --tail=50
+# a trace should appear in Tempo once you hit vLLM
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -d '{"model":"meta-llama/Meta-Llama-3-8B-Instruct","messages":[{"role":"user","content":"hi"}]}'
+```
 
 ## Notes
 

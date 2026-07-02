@@ -17,7 +17,13 @@ spec:
       containers:
         - name: vllm
           image: {{ .Values.image }}
-          args: ["--model", "{{ .Values.model }}"]
+          args:
+            - --model
+            - "{{ .Values.model }}"
+            {{- if .Values.otlp.tracesEndpoint }}
+            - --otlp-traces-endpoint
+            - "{{ .Values.otlp.tracesEndpoint }}"
+            {{- end }}
           ports:
             - name: http
               containerPort: 8000
@@ -38,3 +44,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "llama.hfSecretName" . }}
                   key: token
+            {{- if .Values.otlp.tracesEndpoint }}
+            - name: OTEL_SERVICE_NAME
+              value: "{{ .Values.otlp.serviceName }}"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "{{ .Values.otlp.tracesEndpoint }}"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            {{- end }}

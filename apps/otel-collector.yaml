@@ -1,0 +1,112 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-collector
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  source:
+    repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+    chart: opentelemetry-collector
+    targetRevision: 0.108.0
+    helm:
+      releaseName: otel-collector
+      values: |
+        fullnameOverride: otel-collector
+        mode: daemonset
+        image:
+          repository: otel/opentelemetry-collector-contrib
+        presets:
+          logsCollection:
+            enabled: true
+            includeCollectorLogs: false
+          kubernetesAttributes:
+            enabled: true
+        ports:
+          otlp:
+            enabled: true
+            containerPort: 4317
+            servicePort: 4317
+            hostPort: 0
+            protocol: TCP
+          otlp-http:
+            enabled: true
+            containerPort: 4318
+            servicePort: 4318
+            hostPort: 0
+            protocol: TCP
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+        config:
+          receivers:
+            otlp:
+              protocols:
+                grpc:
+                  endpoint: 0.0.0.0:4317
+                http:
+                  endpoint: 0.0.0.0:4318
+            prometheus:
+              config:
+                scrape_configs:
+                  - job_name: vllm
+                    scrape_interval: 15s
+                    metrics_path: /metrics
+                    static_configs:
+                      - targets:
+                          - llama-llama-8b.llama.svc.cluster.local:8000
+          processors:
+            batch:
+              send_batch_size: 1024
+              timeout: 5s
+            memory_limiter:
+              check_interval: 5s
+              limit_percentage: 80
+              spike_limit_percentage: 20
+            resource:
+              attributes:
+                - key: cluster
+                  value: brev
+                  action: upsert
+          exporters:
+            otlp/tempo:
+              endpoint: tempo.monitoring.svc.cluster.local:4317
+              tls:
+                insecure: true
+            loki:
+              endpoint: http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push
+            prometheusremotewrite:
+              endpoint: http://kps-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
+              tls:
+                insecure: true
+              resource_to_telemetry_conversion:
+                enabled: true
+          service:
+            pipelines:
+              traces:
+                receivers: [otlp]
+                processors: [memory_limiter, k8sattributes, resource, batch]
+                exporters: [otlp/tempo]
+              metrics:
+                receivers: [otlp, prometheus]
+                processors: [memory_limiter, k8sattributes, resource, batch]
+                exporters: [prometheusremotewrite]
+              logs:
+                receivers: [otlp, filelog]
+                processors: [memory_limiter, k8sattributes, resource, batch]
+                exporters: [loki]
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

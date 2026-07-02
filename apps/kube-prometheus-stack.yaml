@@ -25,6 +25,9 @@ spec:
             podMonitorSelectorNilUsesHelmValues: false
             ruleSelectorNilUsesHelmValues: false
             probeSelectorNilUsesHelmValues: false
+            enableRemoteWriteReceiver: true
+            enableFeatures:
+              - remote-write-receiver
             retention: 6h
             resources:
               requests:
