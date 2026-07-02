@@ -2,7 +2,9 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "llama.fullname" . }}
-  labels: {{- include "llama.labels" . | nindent 4 }}
+  labels:
+    release: kps
+    {{- include "llama.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels: {{- include "llama.selectorLabels" . | nindent 6 }}
