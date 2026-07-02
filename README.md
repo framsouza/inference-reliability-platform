@@ -40,6 +40,19 @@ curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-contai
   sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
   sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+```
+
+Pin the toolkit to legacy mode + volume-mount device discovery. Skipping this
+step causes pods to fail with `unresolvable CDI devices` or `unknown device`
+because gpu-operator's `devicePlugin.env: DEVICE_LIST_STRATEGY=volume-mounts`
+needs the runtime to accept device lists via volume mounts, not CDI or env vars.
+Required on driver <570 (CDI segfaults):
+
+```bash
+sudo nvidia-ctk config --in-place \
+  --set nvidia-container-runtime.mode=legacy \
+  --set accept-nvidia-visible-devices-as-volume-mounts=true \
+  --set accept-nvidia-visible-devices-envvar-when-unprivileged=false
 sudo systemctl restart k3s
 ```
 
