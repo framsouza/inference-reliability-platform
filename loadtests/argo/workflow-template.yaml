@@ -56,6 +56,7 @@ spec:
             apt-get update -qq
             apt-get install -qq -y --no-install-recommends git >/dev/null
             git clone --depth 1 --branch v0.9.2 https://github.com/vllm-project/vllm.git /tmp/vllm
+            pip install --quiet pandas Pillow
             cd /tmp/vllm/benchmarks
             exec python3 benchmark_serving.py \
               --backend openai-chat \
