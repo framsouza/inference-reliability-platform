@@ -1,0 +1,12 @@
+replicas: 1
+model: meta-llama/Meta-Llama-3-8B-Instruct
+image: vllm/vllm-openai:latest
+gpu: 1
+
+service:
+  type: ClusterIP
+  port: 8000
+
+hfToken:
+  value: ""
+  existingSecret: hf-token

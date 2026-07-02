@@ -1,0 +1,10 @@
+driver:
+  enabled: false
+toolkit:
+  enabled: false
+cdi:
+  enabled: false
+devicePlugin:
+  env:
+    - name: DEVICE_LIST_STRATEGY
+      value: volume-mounts

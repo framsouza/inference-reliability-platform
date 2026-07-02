@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: llama
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/framsouza/nvidia-brev-vllm.git
+    targetRevision: main
+    path: charts/llama-8b
+    helm:
+      releaseName: llama
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: llama
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,49 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vault
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: vault
+  source:
+    repoURL: https://helm.releases.hashicorp.com
+    chart: vault
+    targetRevision: 0.29.1
+    helm:
+      releaseName: vault
+      values: |
+        global:
+          tlsDisable: true
+        injector:
+          enabled: false
+        server:
+          dev:
+            enabled: true
+            devRootToken: "root"
+          dataStorage:
+            enabled: false
+          auditStorage:
+            enabled: false
+          standalone:
+            enabled: false
+          ha:
+            enabled: false
+          readinessProbe:
+            enabled: true
+            path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+          service:
+            enabled: true
+            type: ClusterIP
+            port: 8200
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

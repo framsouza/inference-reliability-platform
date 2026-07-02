@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llama.fullname" . }}
+  labels: {{- include "llama.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: {{- include "llama.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "llama.selectorLabels" . | nindent 8 }}
+    spec:
+      runtimeClassName: nvidia
+      containers:
+        - name: vllm
+          image: {{ .Values.image }}
+          args: ["--model", "{{ .Values.model }}"]
+          ports:
+            - name: http
+              containerPort: 8000
+          resources:
+            limits:
+              nvidia.com/gpu: {{ .Values.gpu }}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 90
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 120
+            periodSeconds: 15
+          env:
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llama.hfSecretName" . }}
+                  key: token
