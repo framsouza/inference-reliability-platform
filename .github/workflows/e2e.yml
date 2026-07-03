@@ -26,11 +26,15 @@ jobs:
           version: v0.24.0
           node_image: kindest/node:v1.30.4
 
-      - name: install Gateway API v1 CRDs
+      - name: install Gateway API v1 CRDs (experimental channel)
+        # Experimental channel includes standard CRDs plus TLSRoute, TCPRoute,
+        # BackendTLSPolicy — kgateway requires all of these to become Ready.
         run: |
-          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/experimental-install.yaml
           kubectl wait --for condition=established --timeout=60s crd/gateways.gateway.networking.k8s.io
           kubectl wait --for condition=established --timeout=60s crd/httproutes.gateway.networking.k8s.io
+          kubectl wait --for condition=established --timeout=60s crd/tlsroutes.gateway.networking.k8s.io
+          kubectl wait --for condition=established --timeout=60s crd/backendtlspolicies.gateway.networking.k8s.io
 
       - name: install KEDA CRDs only
         run: |
