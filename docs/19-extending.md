@@ -21,7 +21,7 @@ Duplicate `apps/llama.yaml` as `apps/mistral.yaml`:
 ```yaml
 spec:
   source:
-    repoURL: https://github.com/framsouza/nvidia-brev-vllm.git
+    repoURL: https://github.com/framsouza/inference-reliability-platform.git
     path: charts/llama-8b            # same chart
     targetRevision: HEAD
     helm:

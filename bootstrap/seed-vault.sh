@@ -21,7 +21,7 @@ set -euo pipefail
 : "${GITHUB_TOKEN:?export GITHUB_TOKEN first}"
 : "${HF_TOKEN:?export HF_TOKEN first}"
 GITHUB_USER="${GITHUB_USER:-framsouza}"
-REPO_URL="${REPO_URL:-https://github.com/framsouza/nvidia-brev-vllm.git}"
+REPO_URL="${REPO_URL:-https://github.com/framsouza/inference-reliability-platform.git}"
 
 echo "waiting for vault-0 to be ready..."
 until kubectl -n vault get statefulset vault >/dev/null 2>&1; do sleep 5; done

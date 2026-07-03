@@ -73,7 +73,7 @@ Total time on a warm cluster: ~10 minutes. The long pole is:
 
 `bootstrap/root-app.yaml`:
 
-- `spec.source.repoURL: https://github.com/framsouza/nvidia-brev-vllm.git`
+- `spec.source.repoURL: https://github.com/framsouza/inference-reliability-platform.git`
 - `spec.source.path: apps`
 - `spec.destination.namespace: argocd`
 - `syncPolicy.automated.prune: true` / `selfHeal: true`
@@ -129,7 +129,7 @@ source:
 
 ```yaml
 source:
-  repoURL: https://github.com/framsouza/nvidia-brev-vllm.git
+  repoURL: https://github.com/framsouza/inference-reliability-platform.git
   path: httproutes
   targetRevision: HEAD
 ```
@@ -138,7 +138,7 @@ The `llama` Application uses the third pattern (local Helm chart):
 
 ```yaml
 source:
-  repoURL: https://github.com/framsouza/nvidia-brev-vllm.git
+  repoURL: https://github.com/framsouza/inference-reliability-platform.git
   path: charts/llama-8b
   targetRevision: HEAD
   helm:
@@ -206,7 +206,7 @@ Key parts of `bootstrap/install.sh` worth knowing:
    spec:
      project: default
      source:
-       repoURL: https://github.com/framsouza/nvidia-brev-vllm.git
+       repoURL: https://github.com/framsouza/inference-reliability-platform.git
        path: my-thing
        targetRevision: HEAD
      destination:

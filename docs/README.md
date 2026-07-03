@@ -1,6 +1,6 @@
 # Documentation
 
-Deep dives for each component of `nvidia-brev-vllm` — a Brev-launchable, single-GPU
+Deep dives for each component of `inference-reliability-platform` — a Brev-launchable, single-GPU
 vLLM inference platform on Kubernetes engineered for **inference reliability**.
 
 The root [`README.md`](../README.md) is the fast path (what it is, how to launch,

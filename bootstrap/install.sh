@@ -5,7 +5,7 @@ ARGOCD_VERSION="${ARGOCD_VERSION:-v2.13.1}"
 
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 GITHUB_USER="${GITHUB_USER:-git}"
-REPO_URL="${REPO_URL:-https://github.com/framsouza/nvidia-brev-vllm.git}"
+REPO_URL="${REPO_URL:-https://github.com/framsouza/inference-reliability-platform.git}"
 HF_TOKEN="${HF_TOKEN:-}"
 VLLM_API_KEY="${VLLM_API_KEY:-$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
 
@@ -37,7 +37,7 @@ kubectl -n argocd apply -f - <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
-  name: repo-nvidia-brev-vllm
+  name: repo-inference-reliability-platform
   namespace: argocd
   labels:
     argocd.argoproj.io/secret-type: repository
@@ -60,7 +60,7 @@ until kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1; do sl
 
 echo "waiting for ExternalSecret objects to appear (secrets app sync)..."
 until kubectl -n llama  get externalsecret hf-token              >/dev/null 2>&1 \
-   && kubectl -n argocd get externalsecret repo-nvidia-brev-vllm >/dev/null 2>&1; do
+   && kubectl -n argocd get externalsecret repo-inference-reliability-platform >/dev/null 2>&1; do
   sleep 5
 done
 

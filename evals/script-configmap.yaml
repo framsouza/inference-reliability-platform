@@ -4,7 +4,7 @@ metadata:
   name: model-eval-script
   namespace: argo
   annotations:
-    evals.nvidia-brev-vllm/source: evals/evaluator.py
+    evals.inference-reliability-platform/source: evals/evaluator.py
 data:
   evaluator.py: |
     """Model-quality evaluator: scores prompts against expected_regex, pushes metrics."""

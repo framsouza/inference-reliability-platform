@@ -1,4 +1,4 @@
-# nvidia-brev-vllm
+# inference-reliability-platform
 
 A **Brev launchable** that stands up a production-shape vLLM inference
 platform on a single-GPU Kubernetes node — GitOps, KV-cache-aware
@@ -278,7 +278,7 @@ Details: [`docs/04-kubernetes.md`](docs/04-kubernetes.md),
 ```bash
 export GITHUB_TOKEN=ghp_...
 export GITHUB_USER=framsouza
-export REPO_URL=https://github.com/framsouza/nvidia-brev-vllm.git
+export REPO_URL=https://github.com/framsouza/inference-reliability-platform.git
 export HF_TOKEN=hf_...
 ./bootstrap/install.sh
 ```

@@ -155,7 +155,7 @@ Example:
   annotations:
     summary: "vLLM p95 TTFT exceeded 2s"
     description: "..."
-    runbook_url: "https://github.com/framsouza/nvidia-brev-vllm/blob/main/docs/14-alerts.md#latency-slos"
+    runbook_url: "https://github.com/framsouza/inference-reliability-platform/blob/main/docs/14-alerts.md#latency-slos"
 ```
 
 ## Alert routing (Alertmanager)
