@@ -28,3 +28,4 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+      - Replace=true       # force-overwrite CRD field ownership on channel changes
