@@ -15,7 +15,7 @@ spec:
       releaseName: kgateway
       values: |
         inferenceExtension:
-          enabled: false
+          enabled: true
         gatewayClass:
           name: kgateway
         controller:
