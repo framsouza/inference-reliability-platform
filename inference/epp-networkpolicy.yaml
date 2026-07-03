@@ -34,7 +34,9 @@ spec:
         - {protocol: TCP, port: 53}
     - to:
         - ipBlock:
-            cidr: 10.43.0.0/16
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
       ports:
         - {protocol: TCP, port: 443}
         - {protocol: TCP, port: 6443}
