@@ -111,7 +111,7 @@ jobs:
           # Give Kyverno a moment to register the webhook configurations
           sleep 15
 
-      - name: create supporting resources (fake secrets + namespaces)
+      - name: create supporting resources (fake secrets + namespaces + nvidia RuntimeClass stub)
         run: |
           kubectl create namespace llama
           kubectl create secret generic hf-token         -n llama --from-literal=token=fake
@@ -119,6 +119,16 @@ jobs:
           kubectl create namespace gateway || true
           kubectl create namespace monitoring || true
           kubectl create namespace argo || true
+          # Stub RuntimeClass so pod admission passes on kind (which has no
+          # nvidia-container-runtime). Handler=runc means pods just run under
+          # normal runc — sufficient for admission testing.
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: node.k8s.io/v1
+          kind: RuntimeClass
+          metadata:
+            name: nvidia
+          handler: runc
+          EOF
 
       - name: helm install the chart (with fake image so pod won't try to pull real vLLM)
         run: |
