@@ -1,9 +1,9 @@
-# inference-reliability-platform
+# AI Inference Reliability Platform on Kubernetes - [NVIDIA Brev Launchable](https://brev.nvidia.com/launchable/deploy?launchableID=env-3FzcX45FAw5OHwb55uNw24u4L2W)
 
 A **Brev launchable** that stands up a production-shape vLLM inference
 platform on a single-GPU Kubernetes node — GitOps, KV-cache-aware
 routing, autoscaling, observability, policy enforcement, evals, load
-tests, CI. **The design goal is inference reliability.**
+tests, CI and secret management with Vault and External Secrets Operator. **The design goal of this launchable is inference reliability.**
 
 One command bootstraps the whole stack. What you get:
 
