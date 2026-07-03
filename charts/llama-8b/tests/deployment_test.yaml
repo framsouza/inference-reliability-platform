@@ -94,13 +94,20 @@ tests:
             mountPath: /cache/huggingface
 
   # ────────── /dev/shm ──────────
-  - it: mounts /dev/shm with sizeLimit
+  - it: mounts /dev/shm as in-memory emptyDir with a sizeLimit
     asserts:
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: shm
             mountPath: /dev/shm
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: shm
+            emptyDir:
+              medium: Memory
+              sizeLimit: 2Gi
 
   # ────────── HF token + API key ──────────
   - it: mounts HF token from Secret

@@ -72,11 +72,11 @@ jobs:
         # is (a) flaky and (b) not what CI is trying to validate — the image sig
         # check runs on the cluster's Kyverno at admission time.
         run: |
-          helm template llama charts/llama-8b > /tmp/chart.yaml
+          helm template llama charts/llama-8b --namespace llama > /tmp/chart.yaml
           mkdir -p /tmp/policies
           cp policies/*.yaml /tmp/policies/
           rm -f /tmp/policies/verify-vllm-image.yaml
-          kyverno apply /tmp/policies --resource /tmp/chart.yaml
+          kyverno apply /tmp/policies --resource /tmp/chart.yaml --namespace llama
 
   helm-unittest:
     runs-on: ubuntu-latest

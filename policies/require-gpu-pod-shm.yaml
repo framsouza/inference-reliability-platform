@@ -1,0 +1,45 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-gpu-pod-shm
+  annotations:
+    policies.kyverno.io/title: "GPU pods must mount adequate /dev/shm"
+    policies.kyverno.io/category: GPU
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      GPU workloads (PyTorch, vLLM, etc.) crash with `Bus error` when /dev/shm
+      stays at the kubelet default (64 MiB). Enforce an in-memory emptyDir at
+      /dev/shm on any pod requesting nvidia.com/gpu. This is the single most
+      common footgun for anyone launching a new inference workload here.
+spec:
+  admission: true
+  background: true
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  rules:
+    - name: require-shm-emptydir
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      preconditions:
+        all:
+          - key: "{{ length(request.object.spec.containers[?resources.limits.\"nvidia.com/gpu\"]) }}"
+            operator: GreaterThan
+            value: 0
+      validate:
+        message: >-
+          Pod "{{ request.object.metadata.name }}" requests nvidia.com/gpu but
+          does not mount /dev/shm as an in-memory emptyDir with a sizeLimit.
+          Add a volume `{name: shm, emptyDir: {medium: Memory, sizeLimit: 2Gi}}`
+          and a matching volumeMount at /dev/shm, or PyTorch/vLLM will crash
+          with "Bus error" under load.
+        pattern:
+          spec:
+            volumes:
+              - emptyDir:
+                  medium: Memory
+                  sizeLimit: "?*"
+            containers:
+              - volumeMounts:
+                  - mountPath: /dev/shm

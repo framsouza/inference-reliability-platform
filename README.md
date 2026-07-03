@@ -44,7 +44,7 @@ httproutes/      HTTPRoutes for each backend behind the Gateway
 images/          architecture diagrams (mermaid source + rendered svg)
 inference/       (reserved) InferencePool + InferenceObjective
 loadtests/argo/  Argo WorkflowTemplate for vllm-bench + CLI toolbox
-policies/        Kyverno ClusterPolicies (GPU runtime class, ServiceMonitor label…)
+policies/        Kyverno ClusterPolicies (GPU shm, resource requests, priorityclass, runtime class, ServiceMonitor label…)
 secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
@@ -336,6 +336,33 @@ primitive, where it lives in the repo, and — importantly — **why** it exists
   Chart values default to `minReplicas: 1, maxReplicas: 1` (always-on) — flip
   `autoscaling.minReplicas: 0` to enable scale-to-zero. Wake-up on cold-start
   needs a request-buffer (add `keda-http-add-on` when you're ready).
+
+### Launchable-safety guardrails (Kyverno, Audit mode)
+
+The chart's hardening (shm, resource requests, PriorityClass, etc.) is
+validated at PR time by helm-unittest. But once this repo is a Brev
+launchable and *other people* deploy things into the cluster — imperative
+`kubectl run`, a second Helm chart, a debug Job someone adds — those
+per-file tests aren't in the path. Three cluster-wide Kyverno policies
+cover the class of "any GPU or inference workload here should look like the
+vLLM chart does":
+
+| Policy | Fires when | Why |
+|---|---|---|
+| `require-gpu-pod-shm` | Any Pod requesting `nvidia.com/gpu` missing an in-memory `/dev/shm` mount | vLLM/PyTorch crash with `Bus error` at the 64 MiB kubelet default. Single biggest footgun. |
+| `require-inference-pod-resources` | Any Pod in `llama` ns missing cpu/memory `requests` | BestEffort QoS is the first thing kubelet evicts. Promotes to Burstable+. |
+| `require-inference-pod-priorityclass` | Any Pod in `llama` ns without `priorityClassName` | Rogue debug pods shouldn't outlive vLLM under memory pressure. |
+
+All three ship in **Audit** — no admission blocking, but Kyverno writes
+`PolicyReport` objects for violations. Once you've onboarded a few users
+and confirmed nothing legit trips them, flip `validationFailureAction:
+Enforce` to make them blocking.
+
+Check reports after any workload lands:
+```bash
+kubectl get policyreport,clusterpolicyreport -A
+kubectl -n llama get policyreport -o yaml | yq '.[].results[] | select(.result != "pass")'
+```
 
 ### Cosign image verification — supply chain (Audit mode)
 

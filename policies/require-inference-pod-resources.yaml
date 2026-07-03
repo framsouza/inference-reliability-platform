@@ -1,0 +1,37 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-inference-pod-resources
+  annotations:
+    policies.kyverno.io/title: "Pods in llama ns must set CPU + memory requests"
+    policies.kyverno.io/category: Inference
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Pods without resources.requests fall to BestEffort QoS, which is the
+      first thing kubelet evicts under pressure. Any pod running in the
+      inference namespace must set at least CPU + memory requests so it's
+      promoted to Burstable or Guaranteed.
+spec:
+  admission: true
+  background: true
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  rules:
+    - name: require-cpu-mem-requests
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [llama]
+      validate:
+        message: >-
+          Pod "{{ request.object.metadata.name }}" in the llama namespace has a
+          container missing resources.requests.cpu or .memory. Set both to
+          promote the pod out of BestEffort QoS.
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
