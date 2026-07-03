@@ -21,6 +21,14 @@ tests:
           path: metadata.annotations["argocd.argoproj.io/hook-delete-policy"]
           value: HookSucceeded
 
+  - it: rollout-gate Job carries priorityClassName so it schedules under pressure
+    template: rollout-gate-job.yaml
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.priorityClassName
+          value: gpu-inference
+
   - it: rollout-gate Job has PostSync hook, never restarts, zero backoff
     template: rollout-gate-job.yaml
     documentIndex: 1

@@ -23,6 +23,9 @@ spec:
     spec:
       restartPolicy: Never
       serviceAccountName: {{ include "llama.fullname" . }}-rollout-gate
+      {{- if .Values.priorityClass.enabled }}
+      priorityClassName: {{ .Values.priorityClass.name }}
+      {{- end }}
       containers:
         - name: bench
           image: {{ .Values.rolloutGate.image }}
