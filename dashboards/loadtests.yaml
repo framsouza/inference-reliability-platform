@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-loadtests
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  loadtests.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [
+        {"title": "Inference cost", "type": "link", "url": "/d/inference-cost", "icon": "bolt", "targetBlank": false},
+        {"title": "Envoy Gateway", "type": "link", "url": "/d/envoy-gateway", "icon": "bolt", "targetBlank": false},
+        {"title": "vLLM inference", "type": "link", "url": "/d/vllm-inference", "icon": "bolt", "targetBlank": false},
+        {"title": "GPU (DCGM)", "type": "link", "url": "/d/nvidia-gpu-dcgm", "icon": "bolt", "targetBlank": false}
+      ],
+      "panels": [
+        {
+          "type": "stat", "title": "Last run", "id": 1,
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "targets": [{"expr": "time() - max(loadtest_last_run_timestamp{scenario=~\"$scenario\",model=~\"$model\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 86400}, {"color": "red", "value": 172800}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"}
+        },
+        {
+          "type": "stat", "title": "Overall p95 TTFT", "id": 2,
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "targets": [{"expr": "max(loadtest_ttft_p95_seconds{scenario=~\"$scenario\",model=~\"$model\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 2}, {"color": "red", "value": 5}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "Overall p95 e2e", "id": 3,
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "targets": [{"expr": "max(loadtest_e2e_p95_seconds{scenario=~\"$scenario\",model=~\"$model\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 10}, {"color": "red", "value": 30}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "Overall error rate", "id": 4,
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "targets": [{"expr": "max(loadtest_error_rate{scenario=~\"$scenario\",model=~\"$model\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.01}, {"color": "red", "value": 0.05}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "bargauge", "title": "TTFT p95 by scenario (latest)", "id": 5,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [{"expr": "loadtest_ttft_p95_seconds{scenario=~\"$scenario\",model=~\"$model\"}", "legendFormat": "{{scenario}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 2}, {"color": "red", "value": 5}]}}},
+          "options": {"orientation": "horizontal", "displayMode": "gradient", "reduceOptions": {"calcs": ["lastNotNull"]}}
+        },
+        {
+          "type": "bargauge", "title": "e2e p95 by scenario (latest)", "id": 6,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [{"expr": "loadtest_e2e_p95_seconds{scenario=~\"$scenario\",model=~\"$model\"}", "legendFormat": "{{scenario}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 10}, {"color": "red", "value": 30}]}}},
+          "options": {"orientation": "horizontal", "displayMode": "gradient", "reduceOptions": {"calcs": ["lastNotNull"]}}
+        },
+        {
+          "type": "timeseries", "title": "TTFT p95 trend by scenario", "id": 7,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "targets": [
+            {"expr": "loadtest_ttft_p95_seconds{scenario=~\"$scenario\",model=~\"$model\"}", "legendFormat": "p95 {{scenario}}", "refId": "A"},
+            {"expr": "loadtest_ttft_p99_seconds{scenario=~\"$scenario\",model=~\"$model\"}", "legendFormat": "p99 {{scenario}}", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "pointSize": 5, "showPoints": "always"}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "min", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "e2e p95 trend by scenario", "id": 8,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "targets": [
+            {"expr": "loadtest_e2e_p95_seconds{scenario=~\"$scenario\",model=~\"$model\"}", "legendFormat": "p95 {{scenario}}", "refId": "A"},
+            {"expr": "loadtest_e2e_p99_seconds{scenario=~\"$scenario\",model=~\"$model\"}", "legendFormat": "p99 {{scenario}}", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "pointSize": 5, "showPoints": "always"}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "min", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Client-measured throughput (tokens/sec)", "id": 9,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+          "targets": [
+            {"expr": "loadtest_output_throughput_tokens_per_sec{scenario=~\"$scenario\",model=~\"$model\"}", "legendFormat": "generation tok/s {{scenario}}", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15, "pointSize": 5, "showPoints": "always"}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Request throughput (req/sec)", "id": 10,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+          "targets": [
+            {"expr": "loadtest_request_throughput_per_sec{scenario=~\"$scenario\",model=~\"$model\"}", "legendFormat": "{{scenario}}", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15, "pointSize": 5, "showPoints": "always"}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "table", "title": "Latest run per scenario (summary)", "id": 11,
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
+          "targets": [
+            {"expr": "loadtest_ttft_p95_seconds{scenario=~\"$scenario\",model=~\"$model\"}", "instant": true, "refId": "A", "format": "table"},
+            {"expr": "loadtest_e2e_p95_seconds{scenario=~\"$scenario\",model=~\"$model\"}", "instant": true, "refId": "B", "format": "table"},
+            {"expr": "loadtest_output_throughput_tokens_per_sec{scenario=~\"$scenario\",model=~\"$model\"}", "instant": true, "refId": "C", "format": "table"},
+            {"expr": "loadtest_request_throughput_per_sec{scenario=~\"$scenario\",model=~\"$model\"}", "instant": true, "refId": "D", "format": "table"},
+            {"expr": "loadtest_error_rate{scenario=~\"$scenario\",model=~\"$model\"}", "instant": true, "refId": "E", "format": "table"},
+            {"expr": "loadtest_completed{scenario=~\"$scenario\",model=~\"$model\"}", "instant": true, "refId": "F", "format": "table"}
+          ],
+          "transformations": [
+            {"id": "merge", "options": {}},
+            {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true}, "renameByName": {"Value #A": "TTFT p95 s", "Value #B": "e2e p95 s", "Value #C": "gen tok/s", "Value #D": "req/s", "Value #E": "err rate", "Value #F": "completed"}}}
+          ],
+          "fieldConfig": {"defaults": {"custom": {"align": "auto"}}}
+        }
+      ],
+      "refresh": "1m",
+      "schemaVersion": 39,
+      "tags": ["loadtest", "vllm", "bench"],
+      "templating": {
+        "list": [
+          {
+            "name": "model",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "query": {"query": "label_values(loadtest_last_run_timestamp, model)"},
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "current": {"selected": true, "text": ["All"], "value": ["$__all"]},
+            "refresh": 2,
+            "sort": 1
+          },
+          {
+            "name": "scenario",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "query": {"query": "label_values(loadtest_last_run_timestamp, scenario)"},
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "current": {"selected": true, "text": ["All"], "value": ["$__all"]},
+            "refresh": 2,
+            "sort": 1
+          }
+        ]
+      },
+      "time": {"from": "now-7d", "to": "now"},
+      "timezone": "browser",
+      "title": "Load tests",
+      "uid": "loadtests",
+      "version": 1
+    }

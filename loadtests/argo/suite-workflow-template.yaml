@@ -1,0 +1,82 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: vllm-bench-suite
+  namespace: argo
+spec:
+  entrypoint: suite
+  serviceAccountName: argo-workflow
+  ttlStrategy:
+    secondsAfterCompletion: 86400
+  podGC:
+    strategy: OnWorkflowSuccess
+  templates:
+    - name: suite
+      dag:
+        tasks:
+          - name: warmup
+            templateRef: {name: vllm-bench, template: bench}
+            arguments:
+              parameters:
+                - {name: scenario,     value: warmup}
+                - {name: model,        value: meta-llama/Meta-Llama-3-8B-Instruct}
+                - {name: base-url,     value: http://llama-llama-8b.llama.svc.cluster.local:8000}
+                - {name: dataset,      value: random}
+                - {name: num-prompts,  value: "20"}
+                - {name: request-rate, value: "2"}
+                - {name: input-len,    value: "128"}
+                - {name: output-len,   value: "32"}
+                - {name: seed,         value: "42"}
+                - {name: image,        value: vllm/vllm-openai:v0.9.2}
+                - {name: pushgateway-url, value: http://pushgateway-prometheus-pushgateway.monitoring.svc.cluster.local:9091}
+
+          - name: baseline
+            dependencies: [warmup]
+            templateRef: {name: vllm-bench, template: bench}
+            arguments:
+              parameters:
+                - {name: scenario,     value: baseline}
+                - {name: model,        value: meta-llama/Meta-Llama-3-8B-Instruct}
+                - {name: base-url,     value: http://llama-llama-8b.llama.svc.cluster.local:8000}
+                - {name: dataset,      value: random}
+                - {name: num-prompts,  value: "200"}
+                - {name: request-rate, value: "5"}
+                - {name: input-len,    value: "512"}
+                - {name: output-len,   value: "128"}
+                - {name: seed,         value: "42"}
+                - {name: image,        value: vllm/vllm-openai:v0.9.2}
+                - {name: pushgateway-url, value: http://pushgateway-prometheus-pushgateway.monitoring.svc.cluster.local:9091}
+
+          - name: burst
+            dependencies: [baseline]
+            templateRef: {name: vllm-bench, template: bench}
+            arguments:
+              parameters:
+                - {name: scenario,     value: burst}
+                - {name: model,        value: meta-llama/Meta-Llama-3-8B-Instruct}
+                - {name: base-url,     value: http://llama-llama-8b.llama.svc.cluster.local:8000}
+                - {name: dataset,      value: random}
+                - {name: num-prompts,  value: "500"}
+                - {name: request-rate, value: "inf"}
+                - {name: input-len,    value: "512"}
+                - {name: output-len,   value: "128"}
+                - {name: seed,         value: "42"}
+                - {name: image,        value: vllm/vllm-openai:v0.9.2}
+                - {name: pushgateway-url, value: http://pushgateway-prometheus-pushgateway.monitoring.svc.cluster.local:9091}
+
+          - name: long-context
+            dependencies: [burst]
+            templateRef: {name: vllm-bench, template: bench}
+            arguments:
+              parameters:
+                - {name: scenario,     value: long-context}
+                - {name: model,        value: meta-llama/Meta-Llama-3-8B-Instruct}
+                - {name: base-url,     value: http://llama-llama-8b.llama.svc.cluster.local:8000}
+                - {name: dataset,      value: random}
+                - {name: num-prompts,  value: "50"}
+                - {name: request-rate, value: "2"}
+                - {name: input-len,    value: "4096"}
+                - {name: output-len,   value: "128"}
+                - {name: seed,         value: "42"}
+                - {name: image,        value: vllm/vllm-openai:v0.9.2}
+                - {name: pushgateway-url, value: http://pushgateway-prometheus-pushgateway.monitoring.svc.cluster.local:9091}
