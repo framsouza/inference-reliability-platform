@@ -55,17 +55,6 @@ echo "waiting for vault-0 to come up (root app must sync the vault Application f
 until kubectl -n vault get statefulset vault >/dev/null 2>&1; do sleep 5; done
 kubectl -n vault rollout status statefulset/vault --timeout=10m
 
-echo "seeding vault..."
-kubectl -n vault exec -i vault-0 -- sh -c \
-  "VAULT_TOKEN=root vault kv put secret/hf token='${HF_TOKEN}'"
-kubectl -n vault exec -i vault-0 -- sh -c \
-  "VAULT_TOKEN=root vault kv put secret/github \
-     url='${REPO_URL}' username='${GITHUB_USER}' password='${GITHUB_TOKEN}'"
-kubectl -n vault exec -i vault-0 -- sh -c \
-  "VAULT_TOKEN=root vault kv put secret/vllm apiKey='${VLLM_API_KEY}'"
-echo "vLLM API key seeded. Save this — clients must send it as \`Authorization: Bearer <key>\`:"
-echo "  ${VLLM_API_KEY}"
-
 echo "waiting for ExternalSecret CRDs to be registered..."
 until kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1; do sleep 5; done
 
@@ -75,8 +64,9 @@ until kubectl -n llama  get externalsecret hf-token              >/dev/null 2>&1
   sleep 5
 done
 
-kubectl -n llama  annotate externalsecret hf-token              force-sync=$(date +%s) --overwrite
-kubectl -n argocd annotate externalsecret repo-nvidia-brev-vllm force-sync=$(date +%s) --overwrite
+VLLM_API_KEY="${VLLM_API_KEY}" GITHUB_TOKEN="${GITHUB_TOKEN}" GITHUB_USER="${GITHUB_USER}" \
+  REPO_URL="${REPO_URL}" HF_TOKEN="${HF_TOKEN}" \
+  "${SCRIPT_DIR}/seed-vault.sh"
 
 echo
 echo "argocd ${ARGOCD_VERSION} up. seeded vault. ESO reconciling."

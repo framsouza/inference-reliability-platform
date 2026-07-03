@@ -128,21 +128,28 @@ Same shape for rotating the HF token via `secret/hf`.
 | `vllm-api-key`          | `secret/vllm`   | `llama/vllm-api-key`            |
 | `repo-nvidia-brev-vllm` | `secret/github` | `argocd/repo-nvidia-brev-vllm`  |
 
-**Vault pod restarted?** Dev mode is in-memory — re-seed:
+**Vault pod restarted?** Dev mode is in-memory. Re-seed with one command —
+`bootstrap/seed-vault.sh` is idempotent and re-runnable any time:
 
 ```bash
-kubectl -n vault rollout status statefulset/vault --timeout=5m
-kubectl -n vault exec -i vault-0 -- sh -c \
-  "VAULT_TOKEN=root vault kv put secret/hf token='$HF_TOKEN'"
-kubectl -n vault exec -i vault-0 -- sh -c \
-  "VAULT_TOKEN=root vault kv put secret/github \
-     url='$REPO_URL' username='$GITHUB_USER' password='$GITHUB_TOKEN'"
-kubectl -n vault exec -i vault-0 -- sh -c \
-  "VAULT_TOKEN=root vault kv put secret/vllm apiKey='$VLLM_API_KEY'"
-kubectl -n llama  annotate externalsecret hf-token              force-sync=$(date +%s) --overwrite
-kubectl -n llama  annotate externalsecret vllm-api-key          force-sync=$(date +%s) --overwrite
-kubectl -n argocd annotate externalsecret repo-nvidia-brev-vllm force-sync=$(date +%s) --overwrite
+export GITHUB_TOKEN=ghp_...
+export HF_TOKEN=hf_...
+# VLLM_API_KEY is preserved from Vault if it existed; otherwise a new one is
+# generated and printed at the end. Set it explicitly to force a specific value.
+./bootstrap/seed-vault.sh
 ```
+
+The script:
+- Waits for `vault-0` to be Ready.
+- Reuses the existing `secret/vllm.apiKey` from Vault when possible (so a
+  routine re-seed doesn't rotate the API key or require restarting vLLM).
+- Puts fresh values for `secret/hf`, `secret/github`, and `secret/vllm`.
+- Force-syncs every ExternalSecret in `llama`, `argocd`, and `argo` so ESO
+  re-materializes the derived K8s Secrets immediately.
+- Restarts the vLLM Deployment only if needed (it does anyway, cheaply).
+
+`bootstrap/install.sh` calls `seed-vault.sh` internally, so a first-time
+install just needs `GITHUB_TOKEN` + `HF_TOKEN` exported.
 
 ## 3. Verify
 
