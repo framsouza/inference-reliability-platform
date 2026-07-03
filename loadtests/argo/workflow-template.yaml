@@ -119,6 +119,9 @@ spec:
               secretKeyRef: {name: hf-token, key: token, optional: false}
           - name: HF_HUB_ENABLE_HF_TRANSFER
             value: "0"
+          - name: OPENAI_API_KEY
+            valueFrom:
+              secretKeyRef: {name: vllm-api-key, key: token, optional: false}
         resources:
           requests: {cpu: "500m", memory: "1Gi"}
           limits:   {cpu: "2",    memory: "4Gi"}
