@@ -59,6 +59,16 @@ jobs:
           kubectl apply --server-side -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.76.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
           kubectl wait --for condition=established --timeout=60s crd/servicemonitors.monitoring.coreos.com
 
+      - name: install Argo Workflows CRD (referenced by mutate-workflow-ttl policy)
+        run: |
+          kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-workflows/v3.6.2/manifests/base/crds/full/argoproj.io_workflows.yaml
+          for i in $(seq 1 30); do
+            status=$(kubectl get crd workflows.argoproj.io \
+              -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null || true)
+            [ "$status" = "True" ] && break
+            sleep 2
+          done
+
       - name: install Kyverno (admission enforcement path)
         run: |
           helm repo add kyverno https://kyverno.github.io/kyverno/
