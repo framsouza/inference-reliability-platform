@@ -8,6 +8,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: llama-8b
       app.kubernetes.io/instance: llama
-  targetPortNumber: 8000
+  targetPorts:
+    - number: 8000
   endpointPickerRef:
     name: llama-8b-epp
