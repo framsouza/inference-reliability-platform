@@ -144,9 +144,22 @@ jobs:
           kubectl -n llama get servicemonitor llama-llama-8b
           kubectl get priorityclass gpu-inference
 
-      - name: verify Kyverno mutated runtimeClassName on the vLLM pod
+      - name: wait for vLLM pod to be admitted (even if Pending)
         run: |
-          # Pod is created but Pending (no GPU on kind); we can still inspect the spec.
+          for i in $(seq 1 60); do
+            count=$(kubectl -n llama get pod -l app.kubernetes.io/name=llama-8b --no-headers 2>/dev/null | wc -l)
+            [ "$count" -gt 0 ] && break
+            sleep 2
+          done
+          echo "--- pods in llama ns ---"
+          kubectl -n llama get pod -l app.kubernetes.io/name=llama-8b -o wide
+          echo "--- ReplicaSet events (in case admission is blocked) ---"
+          kubectl -n llama describe rs -l app.kubernetes.io/name=llama-8b | tail -30
+
+      - name: verify Kyverno mutated runtimeClassName on the vLLM pod
+        # Pod is Pending (no GPU on kind), but Kyverno mutation is admission-time
+        # so runtimeClassName should be set in its spec anyway.
+        run: |
           kubectl -n llama get pod -l app.kubernetes.io/name=llama-8b -o jsonpath='{.items[0].spec.runtimeClassName}' | grep -q nvidia
 
       - name: verify no Kyverno policy is denying anything unexpected
