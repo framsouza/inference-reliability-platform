@@ -1,0 +1,39 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-vllm-image
+  annotations:
+    policies.kyverno.io/title: "Cosign-verify vLLM container images"
+    policies.kyverno.io/category: Supply Chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Any Pod pulling `vllm/vllm-openai:*` must present a valid Cosign
+      signature from the vllm-project GitHub Actions keyless signer. Runs in
+      Audit mode until vLLM's release pipeline signs images consistently —
+      flip `validationFailureAction` to Enforce once verified.
+spec:
+  admission: true
+  background: false
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: verify-vllm-openai-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      verifyImages:
+        - imageReferences:
+            - "docker.io/vllm/vllm-openai:*"
+            - "vllm/vllm-openai:*"
+          attestors:
+            - entries:
+                - keyless:
+                    subject: "https://github.com/vllm-project/vllm/*"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: https://rekor.sigstore.dev
+          required: true
+          mutateDigest: false
+          verifyDigest: false

@@ -1,0 +1,33 @@
+{{- if .Values.autoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "llama.fullname" . }}
+  labels: {{- include "llama.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "llama.fullname" . }}
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  pollingInterval: 30
+  cooldownPeriod: {{ .Values.autoscaling.idleCooldownSeconds }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: {{ .Values.autoscaling.idleCooldownSeconds }}
+        scaleUp:
+          stabilizationWindowSeconds: 0
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.autoscaling.prometheusUrl }}
+        metricName: vllm_num_requests_running
+        threshold: "1"
+        query: |
+          sum(vllm:num_requests_running{model_name=~".*"}) +
+          sum(vllm:num_requests_waiting{model_name=~".*"})
+        activationThreshold: "0"
+{{- end }}

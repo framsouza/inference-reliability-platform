@@ -3,17 +3,53 @@
 vLLM serving Llama-3-8B on a single-GPU k3s node. ArgoCD does the deploys, Vault
 (dev) + ESO handle secrets.
 
+## Architecture
+
+Diagrams live in [`images/`](images/) — both the Mermaid source (`.mmd`) and
+the rendered SVG. To regenerate after editing:
+`npx -p @mermaid-js/mermaid-cli mmdc -i images/<name>.mmd -o images/<name>.svg -b white`.
+
+### Kubernetes infrastructure
+
+Namespaces, key controllers, and the control-plane arrows ArgoCD/ESO/kgateway
+draw across them.
+
+![Kubernetes infrastructure](images/k8s-infrastructure.svg)
+
+### Inference request path
+
+What happens on a single `POST /v1/chat/completions` — gateway rate limit,
+NetworkPolicy filter, API-key check, batch scheduling, GPU prefill/decode
+loop, and the trace/metric side-effects.
+
+![Inference request path](images/inference-request-path.svg)
+
+### Observability data flow
+
+Metrics, logs, and traces from every source into Prometheus / Loki / Tempo,
+then out to Grafana + Alertmanager.
+
+![Observability data flow](images/observability-data-flow.svg)
+
 ```
 alerts/          PrometheusRule SLO + GPU alerts
 apps/            argocd Applications
 bootstrap/       argocd install + root app
 charts/llama-8b/ vllm helm chart
 dashboards/      grafana dashboard ConfigMaps
+gateway/         kgateway Gateway resource
+httproutes/      HTTPRoutes for each backend behind the Gateway
+inference/       (reserved) InferencePool + InferenceObjective
+loadtests/argo/  Argo WorkflowTemplate for vllm-bench + CLI toolbox
+policies/        Kyverno ClusterPolicies (GPU runtime class, ServiceMonitor label…)
 secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
-Sync waves: `0` gpu-operator, vault, external-secrets, kube-prometheus-stack,
-loki, tempo → `5` secrets, otel-collector, dashboards, alerts → `10` llama.
+Sync waves: `-6` gateway-api-crds → `-5` kgateway-crds → `-4` kgateway →
+`-2` gateway → `0` gpu-operator, vault, external-secrets,
+kube-prometheus-stack, loki, tempo → `3` kyverno → `5` secrets,
+otel-collector, dashboards, alerts, argo-workflows → `7` policies →
+`10` llama → `11` httproutes → `20` loadtests.
 
 ## 1. Host
 
@@ -84,7 +120,8 @@ Same shape for rotating the HF token via `secret/hf`.
 
 | ExternalSecret          | Vault path      | Target                          |
 |-------------------------|-----------------|---------------------------------|
-| `hf-token`              | `secret/hf`     | `llama/hf-token`                |
+| `hf-token`              | `secret/hf`     | `llama/hf-token`, `argo/hf-token` |
+| `vllm-api-key`          | `secret/vllm`   | `llama/vllm-api-key`            |
 | `repo-nvidia-brev-vllm` | `secret/github` | `argocd/repo-nvidia-brev-vllm`  |
 
 **Vault pod restarted?** Dev mode is in-memory — re-seed:
@@ -96,7 +133,10 @@ kubectl -n vault exec -i vault-0 -- sh -c \
 kubectl -n vault exec -i vault-0 -- sh -c \
   "VAULT_TOKEN=root vault kv put secret/github \
      url='$REPO_URL' username='$GITHUB_USER' password='$GITHUB_TOKEN'"
+kubectl -n vault exec -i vault-0 -- sh -c \
+  "VAULT_TOKEN=root vault kv put secret/vllm apiKey='$VLLM_API_KEY'"
 kubectl -n llama  annotate externalsecret hf-token              force-sync=$(date +%s) --overwrite
+kubectl -n llama  annotate externalsecret vllm-api-key          force-sync=$(date +%s) --overwrite
 kubectl -n argocd annotate externalsecret repo-nvidia-brev-vllm force-sync=$(date +%s) --overwrite
 ```
 
@@ -146,6 +186,189 @@ kubectl run dcgm-diag --rm -it --restart=Never \
   --image=nvcr.io/nvidia/cloud-native/dcgm:3.3.5-1-ubuntu22.04 \
   --overrides='{"spec":{"runtimeClassName":"nvidia","containers":[{"name":"dcgm-diag","image":"nvcr.io/nvidia/cloud-native/dcgm:3.3.5-1-ubuntu22.04","command":["dcgmi","diag","-r","2"],"resources":{"limits":{"nvidia.com/gpu":1}}}]}}'
 ```
+
+## Reliability & scalability
+
+The vLLM Deployment (`charts/llama-8b/`) is hardened against the failure modes
+that break single-GPU inference in practice. Each entry below is a Kubernetes
+primitive, where it lives in the repo, and — importantly — **why** it exists.
+
+### Model cache PVC — avoid re-downloading Llama-3-8B on every restart
+
+- **What**: `PersistentVolumeClaim` `llama-llama-8b-hf-cache` (100 GiB,
+  `local-path`), mounted at `/cache/huggingface`; `HF_HOME` env points there.
+  `HF_HUB_ENABLE_HF_TRANSFER=1` on plus the `hf_transfer` pip package for
+  parallel chunk downloads.
+- **Why**: Llama-3-8B is ~15 GB. Without a PVC, every pod restart triggers
+  a fresh download from HuggingFace — 5–30 min cold-start, and any HF outage
+  or token rate-limit locks you out of your own model. With the PVC, first
+  boot pulls once, every subsequent restart resumes in ~30 s.
+- **Where**: `charts/llama-8b/templates/pvc.yaml`,
+  `charts/llama-8b/values.yaml` under `persistence.hfCache`.
+
+### PriorityClass — protect vLLM from best-effort eviction
+
+- **What**: `PriorityClass` `gpu-inference` with `value: 1000000`. Applied to
+  the vLLM pod spec via `priorityClassName: gpu-inference`.
+- **Why**: Under node memory pressure, the kubelet evicts pods by priority.
+  Without a PriorityClass, vLLM (which pins ~24 GB of GPU memory + tens of GB
+  of host memory for KV cache) is fair game — any random cronjob or Kyverno
+  admission spike can bump it off. Setting a high priority tells the scheduler
+  "kill everything else before this."
+- **Where**: `charts/llama-8b/templates/priorityclass.yaml`.
+
+### Resource requests + memory limit — schedule guarantees, no OOMKill
+
+- **What**: `requests: cpu 4, memory 16Gi, nvidia.com/gpu 1`;
+  `limits: memory 32Gi, nvidia.com/gpu 1`. No CPU limit (avoids throttling).
+- **Why**: Previously only `nvidia.com/gpu: 1` was set. That leaves the pod in
+  the *BestEffort* QoS class for CPU/memory — first to be OOMKilled under
+  pressure. `requests` promotes it to *Guaranteed* (for GPU) / *Burstable*
+  (for CPU/mem), giving it scheduling reservations and eviction protection.
+
+### Graceful shutdown — drain in-flight requests on rollout
+
+- **What**: `terminationGracePeriodSeconds: 120` and a `preStop` hook:
+  `sleep 15 && kill -TERM 1`. The `sleep 15` gives kgateway's EndpointSlice
+  removal time to propagate so no *new* requests land on the pod being drained;
+  then SIGTERM lets vLLM's engine finish in-flight generations before exit.
+- **Why**: SIGTERM without a preStop drops every mid-stream generation as a
+  hard error to the client. On a rolling deploy or eviction that means every
+  active user sees a broken response. The 15-second lame-duck window is the
+  standard k8s pattern for kube-proxy / EndpointSlice reconvergence.
+
+### Startup probe + tight readiness probe — handle slow cold-start correctly
+
+- **What**: `startupProbe` with `failureThreshold: 180, periodSeconds: 10`
+  (30 min budget). `readinessProbe` at `periodSeconds: 5, failureThreshold: 3`.
+  `livenessProbe` at `periodSeconds: 15, failureThreshold: 4`.
+- **Why**: The old config had `readinessProbe.initialDelaySeconds: 120` —
+  works if the model is cached, fails on cold-start (first HF download takes
+  minutes to tens of minutes), causing pod restart loops. `startupProbe` was
+  designed for exactly this: gate liveness/readiness until the app is up,
+  with a long budget for slow initial boot; after startup succeeds, the tight
+  readiness probe kicks in and takes the pod out of rotation within 15s of a
+  real failure.
+
+### NetworkPolicy — default-deny + explicit allowlist
+
+- **What**: Two NetworkPolicies in `llama` ns. First (`*-default-deny`) selects
+  all pods, all ingress/egress → nothing is allowed by default. Second
+  (`*-allow`) whitelists exactly: ingress from `gateway` (kgateway data plane
+  on 8000), `monitoring` (Prometheus scrape), `argo` (in-cluster benchmarks);
+  egress to kube-dns, `vault`, `monitoring` (OTLP 4317/4318), and public
+  HTTPS (for HF first-boot download).
+- **Why**: In a default k8s cluster, every pod can reach every other pod. A
+  compromised sidecar in `monitoring` or `argocd` can hit the vLLM API
+  directly on `llama-llama-8b:8000` bypassing kgateway (and its API-key check).
+  Default-deny + explicit allowlist means the only path to vLLM is through
+  the Gateway.
+
+### API key auth — the vLLM endpoint is public now
+
+- **What**: `--api-key $VLLM_API_KEY` on the vLLM command line. The key lives
+  in Vault at `secret/vllm.apiKey`, materialized in `llama` ns via
+  `secrets/vllm-api-key-external-secret.yaml` (ESO). Clients must send
+  `Authorization: Bearer <key>` — vLLM's OpenAI-compat server enforces it.
+- **Why**: Once kgateway exposes `/v1` on port 80, anyone reachable to your
+  node has free unlimited access to the GPU. This is the single highest-
+  severity security gap of the deployment. Auth is enforced *inside* vLLM
+  (before your GPU cycles are spent), not at the gateway — so even
+  gateway-bypass paths (in-cluster hits) require the key.
+- **Where**: `bootstrap/install.sh` generates a random 32-char key on first
+  install and seeds Vault. Rotation:
+  ```bash
+  kubectl -n vault exec vault-0 -- \
+    sh -c "VAULT_TOKEN=root vault kv put secret/vllm apiKey='<new>'"
+  kubectl -n llama annotate externalsecret vllm-api-key \
+    force-sync=$(date +%s) --overwrite
+  kubectl -n llama rollout restart deploy/llama-llama-8b
+  ```
+
+### /dev/shm sizing — enough shared memory for vLLM's inter-process comms
+
+- **What**: `emptyDir` with `medium: Memory, sizeLimit: 2Gi` mounted at
+  `/dev/shm`.
+- **Why**: The k8s default `/dev/shm` is 64 MiB. vLLM's engine spawns worker
+  processes that communicate over shared memory; on longer prompts or larger
+  batches, 64 MiB is not enough and vLLM crashes with `Bus error`. 2 GiB is
+  the vLLM-recommended floor.
+
+### Alerts (`alerts/vllm-slo.yaml`)
+
+- `VLLMHighAbortRate` — >2% of requests aborted (client-timeout / server-cancel)
+  → users are timing out; probably TTFT too high.
+- `VLLMHighLengthTruncationRate` — >20% of responses hit `max_tokens` → tune
+  per-tenant defaults.
+- `VLLMStartupFailing` — pod up >30 min but not serving → model download
+  stuck, HF token invalid, or startup probe failing.
+- `VLLMGPUUnderutilized` — SM util <20% while queue depth >5 → batch size
+  or dtype misconfigured; you're wasting GPU-hours.
+
+### Dashboards (`dashboards/vllm.yaml`)
+
+- **Throughput per hour** — generated tokens/hr and requests/hr trend
+- **GPU efficiency** — SM utilization overlaid with concurrent batch size;
+  the ratio tells you if you're GPU-bound or scheduler-bound
+
+### Loki retention — bounded log storage
+
+- **What**: `limits_config.retention_period: 168h` + `compactor.retention_enabled: true`.
+- **Why**: Loki's default is unlimited retention. On a disk-constrained
+  single-node setup, that fills the PV in weeks. 7 days is the trade-off
+  between debugging usefulness and disk cost.
+
+### KEDA autoscaling — scale-to-zero when idle (opt-in)
+
+- **What**: `ScaledObject` `llama-llama-8b` in the chart. Prometheus scaler
+  reads `sum(vllm:num_requests_running) + sum(vllm:num_requests_waiting)` and
+  scales the Deployment based on activity. `cooldownPeriod: 300` = 5-min idle
+  window before scale-down.
+- **Why**: One GPU means you can't scale *out* (both replicas would fight for
+  the same GPU). Scale-*to-zero* is the useful mode — save GPU-hours when the
+  cluster is idle overnight or between test runs. The HF cache PVC makes
+  wake-up cheap (~30 s), so scale-to-zero is finally viable.
+- **Where**: `apps/keda.yaml` installs the operator;
+  `charts/llama-8b/templates/scaledobject.yaml` defines the trigger.
+  Chart values default to `minReplicas: 1, maxReplicas: 1` (always-on) — flip
+  `autoscaling.minReplicas: 0` to enable scale-to-zero. Wake-up on cold-start
+  needs a request-buffer (add `keda-http-add-on` when you're ready).
+
+### Cosign image verification — supply chain (Audit mode)
+
+- **What**: Kyverno `ClusterPolicy` `verify-vllm-image` — matches every Pod
+  pulling `vllm/vllm-openai:*` and requires a keyless Cosign signature from
+  the `vllm-project` GitHub Actions signer.
+- **Why**: Blocks tampered/replaced base images at admission. Currently in
+  `Audit` mode because vLLM's release pipeline doesn't sign every tag; flip
+  `validationFailureAction: Enforce` once you've confirmed
+  `cosign verify vllm/vllm-openai:<tag>` succeeds for your pinned version.
+- **Where**: `policies/verify-vllm-image.yaml`.
+
+### Rollout gate — benchmark-gated model bumps
+
+- **What**: ArgoCD `PostSync` hook Job (`llama-llama-8b-rollout-gate`) that
+  runs a short `benchmark_serving.py` burst against the freshly-synced pod
+  and asserts p95 TTFT < 3 s and error rate < 2%. If the assertion fails,
+  the Job exits non-zero and ArgoCD marks the sync `Failed`.
+- **Why**: Turns every `image:` or `model:` bump into a regression-gated
+  release. A silently-broken build (bad tokenizer file, image with wrong CUDA,
+  quantization typo) surfaces as a sync failure instead of a silent
+  latency regression 20 minutes later. Thresholds live in
+  `values.rolloutGate.{maxP95TtftSeconds, maxErrorRate}`.
+- **Where**: `charts/llama-8b/templates/rollout-gate-job.yaml`.
+
+### kgateway rate limiting — cap per-source request rate
+
+- **What**: kgateway `TrafficPolicy` `vllm-ratelimit` attached to the `vllm`
+  HTTPRoute — local token bucket, 60 requests per 60 s, no coordination
+  needed. Applies at the gateway before requests hit vLLM.
+- **Why**: A misconfigured client (or an abusive one) can queue up hundreds
+  of concurrent requests and drive KV cache to saturation, preempting
+  legitimate traffic. Bucketing at the gateway sheds excess load with a 429
+  before GPU cycles are spent.
+- **Where**: `httproutes/vllm-ratelimit.yaml`. Tune `maxTokens` /
+  `tokensPerFill` / `fillInterval` to match your peak.
 
 ## Gateway
 
@@ -278,8 +501,11 @@ Sanity checks:
 kubectl -n monitoring get pods
 kubectl -n monitoring logs -l app.kubernetes.io/name=opentelemetry-collector --tail=50
 # a trace should appear in Tempo once you hit vLLM
-curl -X POST http://localhost:8000/v1/chat/completions \
+# API key printed by bootstrap/install.sh, or:
+#   VLLM_API_KEY=$(kubectl -n llama get secret vllm-api-key -o jsonpath='{.data.token}' | base64 -d)
+curl -X POST http://<node-ip>/v1/chat/completions \
   -H "content-type: application/json" \
+  -H "Authorization: Bearer ${VLLM_API_KEY}" \
   -d '{"model":"meta-llama/Meta-Llama-3-8B-Instruct","messages":[{"role":"user","content":"hi"}]}'
 ```
 

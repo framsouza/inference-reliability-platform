@@ -17,3 +17,55 @@ otlp:
   tracesEndpoint: http://otel-collector.monitoring.svc.cluster.local:4318
   serviceName: vllm
   installSdk: true
+
+apiKey:
+  enabled: true
+  existingSecret: vllm-api-key
+  secretKey: token
+
+persistence:
+  hfCache:
+    enabled: true
+    size: 100Gi
+    storageClass: local-path
+    accessMode: ReadWriteOnce
+
+priorityClass:
+  enabled: true
+  name: gpu-inference
+  value: 1000000
+
+resources:
+  requests:
+    cpu: "4"
+    memory: 16Gi
+  limits:
+    memory: 32Gi
+
+probes:
+  startupFailureThreshold: 180
+
+terminationGracePeriodSeconds: 120
+preStopSleepSeconds: 15
+shmSize: 2Gi
+
+networkPolicy:
+  enabled: true
+
+serviceMonitor:
+  enabled: true
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 1
+  idleCooldownSeconds: 300
+  prometheusUrl: http://kps-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+
+rolloutGate:
+  enabled: true
+  image: vllm/vllm-openai:v0.9.2
+  numPrompts: 30
+  requestRate: 2
+  maxP95TtftSeconds: 3.0
+  maxErrorRate: 0.02

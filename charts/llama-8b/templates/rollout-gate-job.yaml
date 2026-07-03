@@ -1,0 +1,110 @@
+{{- if .Values.rolloutGate.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "llama.fullname" . }}-rollout-gate
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "llama.fullname" . }}-rollout-gate
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "llama.fullname" . }}-rollout-gate
+      containers:
+        - name: bench
+          image: {{ .Values.rolloutGate.image }}
+          command: [/bin/bash, -c]
+          env:
+            - name: BASE_URL
+              value: "http://{{ include "llama.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}"
+            - name: MODEL
+              value: {{ .Values.model | quote }}
+            - name: NUM_PROMPTS
+              value: {{ .Values.rolloutGate.numPrompts | quote }}
+            - name: REQUEST_RATE
+              value: {{ .Values.rolloutGate.requestRate | quote }}
+            - name: MAX_P95_TTFT
+              value: {{ .Values.rolloutGate.maxP95TtftSeconds | quote }}
+            - name: MAX_ERROR_RATE
+              value: {{ .Values.rolloutGate.maxErrorRate | quote }}
+            {{- if .Values.apiKey.enabled }}
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiKey.existingSecret }}
+                  key: {{ .Values.apiKey.secretKey }}
+            {{- end }}
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llama.hfSecretName" . }}
+                  key: token
+          args:
+            - |
+              set -euo pipefail
+              echo ">>> waiting for {{ include "llama.fullname" . }} to be ready..."
+              for i in $(seq 1 60); do
+                if curl -sf ${VLLM_API_KEY:+-H "Authorization: Bearer $VLLM_API_KEY"} "$BASE_URL/health" >/dev/null; then
+                  echo "vLLM ready"
+                  break
+                fi
+                sleep 10
+              done
+
+              apt-get update -qq
+              apt-get install -qq -y --no-install-recommends git jq >/dev/null
+              git clone --depth 1 --branch v0.9.2 https://github.com/vllm-project/vllm.git /tmp/vllm
+              pip install --quiet --root-user-action=ignore pandas Pillow datasets
+
+              cd /tmp/vllm/benchmarks
+              python3 benchmark_serving.py \
+                --backend openai-chat \
+                --model "$MODEL" \
+                --base-url "$BASE_URL" \
+                --endpoint /v1/chat/completions \
+                --dataset-name random \
+                --num-prompts "$NUM_PROMPTS" \
+                --request-rate "$REQUEST_RATE" \
+                --random-input-len 256 \
+                --random-output-len 64 \
+                --seed 42 \
+                --percentile-metrics ttft,e2el \
+                --metric-percentiles 50,95,99 \
+                --save-result \
+                --result-dir /tmp \
+                --result-filename result.json \
+                ${VLLM_API_KEY:+--metadata "api_key=$VLLM_API_KEY"}
+
+              echo ">>> results:"
+              cat /tmp/result.json | jq '{p95_ttft_ms, p95_e2el_ms, num_prompts, errors: (.errors // 0), completed}'
+
+              P95_TTFT=$(jq -r '.p95_ttft_ms / 1000' /tmp/result.json)
+              ERRORS=$(jq -r '(.errors // 0) / .num_prompts' /tmp/result.json)
+
+              fail=0
+              awk -v p="$P95_TTFT" -v m="$MAX_P95_TTFT" 'BEGIN{exit !(p > m)}' && {
+                echo "FAIL: p95 TTFT ${P95_TTFT}s > threshold ${MAX_P95_TTFT}s"
+                fail=1
+              }
+              awk -v e="$ERRORS" -v m="$MAX_ERROR_RATE" 'BEGIN{exit !(e > m)}' && {
+                echo "FAIL: error rate ${ERRORS} > threshold ${MAX_ERROR_RATE}"
+                fail=1
+              }
+              exit $fail
+          resources:
+            requests: {cpu: "500m", memory: "1Gi"}
+            limits:   {cpu: "2",    memory: "4Gi"}
+{{- end }}

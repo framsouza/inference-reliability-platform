@@ -14,6 +14,10 @@ spec:
       labels: {{- include "llama.selectorLabels" . | nindent 8 }}
     spec:
       runtimeClassName: nvidia
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- if .Values.priorityClass.enabled }}
+      priorityClassName: {{ .Values.priorityClass.name }}
+      {{- end }}
       containers:
         - name: vllm
           image: {{ .Values.image }}
@@ -28,11 +32,15 @@ spec:
                 opentelemetry-api \
                 opentelemetry-sdk \
                 opentelemetry-exporter-otlp \
-                opentelemetry-semantic-conventions
+                opentelemetry-semantic-conventions \
+                hf_transfer
               args=(
                 --model "{{ .Values.model }}"
                 {{- if .Values.enablePrefixCaching }}
                 --enable-prefix-caching
+                {{- end }}
+                {{- if .Values.apiKey.enabled }}
+                --api-key "$VLLM_API_KEY"
                 {{- end }}
                 --otlp-traces-endpoint "{{ .Values.otlp.tracesEndpoint }}"
               )
@@ -44,6 +52,10 @@ spec:
             {{- if .Values.enablePrefixCaching }}
             - --enable-prefix-caching
             {{- end }}
+            {{- if .Values.apiKey.enabled }}
+            - --api-key
+            - "$(VLLM_API_KEY)"
+            {{- end }}
             {{- if .Values.otlp.tracesEndpoint }}
             - --otlp-traces-endpoint
             - "{{ .Values.otlp.tracesEndpoint }}"
@@ -53,22 +65,51 @@ spec:
             - name: http
               containerPort: 8000
           resources:
-            limits:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
               nvidia.com/gpu: {{ .Values.gpu }}
+            limits:
+              memory: {{ .Values.resources.limits.memory | quote }}
+              nvidia.com/gpu: {{ .Values.gpu }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - "sleep {{ .Values.preStopSleepSeconds }} && kill -TERM 1"
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            failureThreshold: {{ .Values.probes.startupFailureThreshold }}
           readinessProbe:
             httpGet: {path: /health, port: http}
-            initialDelaySeconds: 120
-            periodSeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet: {path: /health, port: http}
-            initialDelaySeconds: 180
             periodSeconds: 15
+            failureThreshold: 4
           env:
             - name: HUGGING_FACE_HUB_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "llama.hfSecretName" . }}
                   key: token
+            {{- if .Values.apiKey.enabled }}
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiKey.existingSecret }}
+                  key: {{ .Values.apiKey.secretKey }}
+            {{- end }}
+            {{- if .Values.persistence.hfCache.enabled }}
+            - name: HF_HOME
+              value: /cache/huggingface
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "1"
+            {{- end }}
             {{- if .Values.otlp.tracesEndpoint }}
             - name: OTEL_SERVICE_NAME
               value: "{{ .Values.otlp.serviceName }}"
@@ -77,3 +118,20 @@ spec:
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: http/protobuf
             {{- end }}
+          volumeMounts:
+            {{- if .Values.persistence.hfCache.enabled }}
+            - name: hf-cache
+              mountPath: /cache/huggingface
+            {{- end }}
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        {{- if .Values.persistence.hfCache.enabled }}
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: {{ include "llama.fullname" . }}-hf-cache
+        {{- end }}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.shmSize }}
