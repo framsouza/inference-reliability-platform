@@ -12,3 +12,5 @@ spec:
     - number: 8000
   endpointPickerRef:
     name: llama-8b-epp
+    port:
+      number: 9002
