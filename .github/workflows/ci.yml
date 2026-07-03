@@ -1,0 +1,97 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  yamllint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install yamllint
+        run: pipx install yamllint
+      - name: run
+        run: yamllint -c .yamllint.yaml .
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./bootstrap
+
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: {version: v3.15.3}
+      - run: helm lint charts/llama-8b
+
+  kubeconform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: {version: v3.15.3}
+      - name: install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xz -C /usr/local/bin kubeconform
+      - name: validate rendered helm chart
+        run: |
+          helm template llama charts/llama-8b > /tmp/chart.yaml
+          kubeconform -strict -summary -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/chart.yaml
+      - name: validate raw manifests
+        run: |
+          find alerts dashboards gateway httproutes policies loadtests secrets evals -name '*.yaml' -print0 2>/dev/null \
+            | xargs -0 -r kubeconform -strict -summary -ignore-missing-schemas \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+
+  kyverno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: {version: v3.15.3}
+      - name: install kyverno-cli
+        run: |
+          curl -sSL https://github.com/kyverno/kyverno/releases/download/v1.13.0/kyverno-cli_v1.13.0_linux_x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin kyverno
+      - name: dry-run policies against rendered chart
+        run: |
+          helm template llama charts/llama-8b > /tmp/chart.yaml
+          kyverno apply policies/ --resource /tmp/chart.yaml --policy-report
+
+  mermaid:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '20'}
+      - name: render mermaid sources
+        run: |
+          for f in images/*.mmd; do
+            echo "--- rendering $f ---"
+            npx --yes -p @mermaid-js/mermaid-cli@11.4.0 \
+              mmdc -i "$f" -o "/tmp/$(basename "$f" .mmd).svg" -b white
+          done
+
+  argocd-diff:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: validate all Application manifests parse
+        run: |
+          find apps -name '*.yaml' -exec sh -c '
+            for f; do
+              python3 -c "import yaml,sys; d=yaml.safe_load(open(\"$f\")); assert d[\"kind\"]==\"Application\", \"$f not an Application\"; print(f\"ok: {d[\"metadata\"][\"name\"]}\")"
+            done' sh {} +

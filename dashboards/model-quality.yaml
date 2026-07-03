@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-model-quality
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  model-quality.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Overall pass rate",
+          "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+          "id": 1,
+          "targets": [{"expr": "avg(model_eval_pass_rate{model=~\"$model\",category=\"_all\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.6}, {"color": "green", "value": 0.85}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat",
+          "title": "Last run",
+          "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+          "id": 2,
+          "targets": [{"expr": "time() - max(model_eval_last_run_timestamp{model=~\"$model\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 25200}, {"color": "red", "value": 43200}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value"}
+        },
+        {
+          "type": "stat",
+          "title": "Prompts / run",
+          "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+          "id": 3,
+          "targets": [{"expr": "max(model_eval_prompts_total{model=~\"$model\",category=\"_all\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value"}
+        },
+        {
+          "type": "stat",
+          "title": "Mean latency",
+          "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+          "id": 4,
+          "targets": [{"expr": "avg(model_eval_latency_seconds{model=~\"$model\",category!=\"_all\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 3}, {"color": "red", "value": 8}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto", "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "timeseries",
+          "title": "Pass rate by category",
+          "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
+          "id": 5,
+          "targets": [
+            {"expr": "model_eval_pass_rate{model=~\"$model\",category!=\"_all\"}", "legendFormat": "{{category}}", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15, "pointSize": 5, "showPoints": "always"}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "lastNotNull", "min"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Response latency by category",
+          "gridPos": {"h": 9, "w": 12, "x": 12, "y": 5},
+          "id": 6,
+          "targets": [
+            {"expr": "model_eval_latency_seconds{model=~\"$model\",category!=\"_all\"}", "legendFormat": "{{category}}", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Response length (completion tokens) by category",
+          "gridPos": {"h": 9, "w": 12, "x": 0, "y": 14},
+          "id": 7,
+          "targets": [
+            {"expr": "model_eval_response_tokens{model=~\"$model\",category!=\"_all\"}", "legendFormat": "{{category}}", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "bargauge",
+          "title": "Latest category pass rate",
+          "gridPos": {"h": 9, "w": 12, "x": 12, "y": 14},
+          "id": 8,
+          "targets": [
+            {"expr": "model_eval_pass_rate{model=~\"$model\",category!=\"_all\"}", "legendFormat": "{{category}}", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.5}, {"color": "green", "value": 0.85}]}}},
+          "options": {"orientation": "horizontal", "displayMode": "gradient", "reduceOptions": {"calcs": ["lastNotNull"]}, "showUnfilled": true}
+        }
+      ],
+      "refresh": "1m",
+      "schemaVersion": 39,
+      "tags": ["vllm", "quality", "eval"],
+      "templating": {
+        "list": [
+          {
+            "name": "model",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "query": {"query": "label_values(model_eval_pass_rate, model)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "current": {"selected": true, "text": ["All"], "value": ["$__all"]},
+            "refresh": 2,
+            "sort": 1
+          }
+        ]
+      },
+      "time": {"from": "now-24h", "to": "now"},
+      "timezone": "browser",
+      "title": "Model quality",
+      "uid": "model-quality",
+      "version": 1
+    }

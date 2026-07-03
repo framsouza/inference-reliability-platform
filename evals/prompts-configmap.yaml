@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-eval-prompts
+  namespace: argo
+data:
+  prompts.jsonl: |
+    {"id":"factual-france","category":"factual","prompt":"What is the capital of France? Answer in one word.","expected_regex":"(?i)paris"}
+    {"id":"factual-water","category":"factual","prompt":"What is the chemical formula for water? Answer with only the formula.","expected_regex":"H2O|H\\u2082O"}
+    {"id":"factual-continents","category":"factual","prompt":"How many continents are there? Answer with just the number.","expected_regex":"\\b7\\b|seven"}
+    {"id":"math-basic","category":"math","prompt":"What is 15 * 23? Answer with only the number.","expected_regex":"\\b345\\b"}
+    {"id":"math-sqrt","category":"math","prompt":"What is the square root of 144? Answer with only the number.","expected_regex":"\\b12\\b"}
+    {"id":"math-percent","category":"math","prompt":"What is 25% of 80? Answer with only the number.","expected_regex":"\\b20\\b"}
+    {"id":"code-reverse","category":"code","prompt":"Write a Python function called reverse_string that takes a string and returns it reversed. Only the function, no explanation.","expected_regex":"(?s)def\\s+reverse_string.*\\[::-1\\]|def\\s+reverse_string.*reversed"}
+    {"id":"code-sum","category":"code","prompt":"Write a Python one-liner that returns the sum of numbers 1 to 100 using sum() and range().","expected_regex":"sum\\s*\\(\\s*range\\s*\\(\\s*1\\s*,\\s*101\\s*\\)"}
+    {"id":"instruction-list","category":"instruction","prompt":"List exactly three primary colors, comma separated, no other text.","expected_regex":"^\\s*[A-Za-z]+\\s*,\\s*[A-Za-z]+\\s*,\\s*[A-Za-z]+\\s*\\.?\\s*$"}
+    {"id":"instruction-uppercase","category":"instruction","prompt":"Reply with exactly the word HELLO in uppercase, nothing else.","expected_regex":"^\\s*HELLO\\s*\\.?\\s*$"}
+    {"id":"reasoning-train","category":"reasoning","prompt":"A train leaves at 3pm and arrives at 5pm. How long was the journey? Answer in the form 'N hours'.","expected_regex":"(?i)\\b2\\s*hours?\\b|\\btwo\\s*hours?\\b"}
+    {"id":"reasoning-siblings","category":"reasoning","prompt":"Alice has 3 brothers and 2 sisters. How many siblings does Alice's brother have (excluding himself)? Answer with just the number.","expected_regex":"\\b4\\b"}

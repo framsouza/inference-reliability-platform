@@ -32,13 +32,16 @@ then out to Grafana + Alertmanager.
 ![Observability data flow](images/observability-data-flow.svg)
 
 ```
-alerts/          PrometheusRule SLO + GPU alerts
+.github/         GitHub Actions CI (helm lint, kubeconform, kyverno test, mermaid render)
+alerts/          PrometheusRule SLO + GPU + model-quality alerts
 apps/            argocd Applications
 bootstrap/       argocd install + root app
 charts/llama-8b/ vllm helm chart
 dashboards/      grafana dashboard ConfigMaps
+evals/           model-quality prompts + Argo CronWorkflow
 gateway/         kgateway Gateway resource
 httproutes/      HTTPRoutes for each backend behind the Gateway
+images/          architecture diagrams (mermaid source + rendered svg)
 inference/       (reserved) InferencePool + InferenceObjective
 loadtests/argo/  Argo WorkflowTemplate for vllm-bench + CLI toolbox
 policies/        Kyverno ClusterPolicies (GPU runtime class, ServiceMonitor label…)
@@ -47,9 +50,9 @@ secrets/         ClusterSecretStore + ExternalSecrets
 
 Sync waves: `-6` gateway-api-crds → `-5` kgateway-crds → `-4` kgateway →
 `-2` gateway → `0` gpu-operator, vault, external-secrets,
-kube-prometheus-stack, loki, tempo → `3` kyverno → `5` secrets,
-otel-collector, dashboards, alerts, argo-workflows → `7` policies →
-`10` llama → `11` httproutes → `20` loadtests.
+kube-prometheus-stack, loki, tempo → `3` kyverno, keda → `5` secrets,
+otel-collector, dashboards, alerts, argo-workflows, pushgateway →
+`7` policies → `10` llama → `11` httproutes → `12` evals → `20` loadtests.
 
 ## 1. Host
 
@@ -357,6 +360,67 @@ primitive, where it lives in the repo, and — importantly — **why** it exists
   latency regression 20 minutes later. Thresholds live in
   `values.rolloutGate.{maxP95TtftSeconds, maxErrorRate}`.
 - **Where**: `charts/llama-8b/templates/rollout-gate-job.yaml`.
+
+### CI/CD — GitHub Actions block bad merges
+
+- **What**: `.github/workflows/ci.yml` runs on every PR and push to `main`:
+  - `yamllint` — style + syntax
+  - `shellcheck` — `bootstrap/install.sh` and any other shell
+  - `helm lint charts/llama-8b`
+  - `helm template … | kubeconform -strict` — validates rendered chart against
+    Kubernetes OpenAPI + community CRD schemas
+  - `find alerts dashboards gateway httproutes policies loadtests secrets evals
+    -name '*.yaml' | kubeconform …` — same for raw manifests
+  - `kyverno apply policies/ --resource <rendered-chart>` — dry-runs every
+    Kyverno ClusterPolicy against the chart output. Catches "would fail
+    admission" *before* ArgoCD applies it.
+  - `mermaid render` — every `.mmd` in `images/` must render without error
+  - `argocd-diff` — every file in `apps/` must be a valid ArgoCD Application
+- **Why**: ArgoCD auto-syncs. Bad YAML = silent sync failure that surfaces as
+  a red app hours later. CI catches all of that on the PR. A broken chart, a
+  policy that would deny the pod, a Kyverno rule that would rewrite the
+  runtime class wrongly — all fail the PR check.
+- **Where**: `.github/workflows/ci.yml`, `.yamllint.yaml`.
+
+### Model quality monitoring — eval loop into Prometheus + Grafana
+
+- **What**: A fixed prompt eval set + a CronWorkflow that runs every 6h.
+  Metrics are pushed to a Prometheus Pushgateway (`monitoring` ns), scraped
+  by Prometheus, and visualized in Grafana.
+  - `evals/prompts-configmap.yaml` — 12 prompts across 5 categories
+    (factual, math, code, instruction, reasoning), each with an
+    `expected_regex` for pass/fail scoring.
+  - `evals/workflow-template.yaml` — inline Python runner using
+    `requests` + `prometheus_client`. Emits `model_eval_pass_rate`,
+    `model_eval_latency_seconds`, `model_eval_response_tokens`,
+    `model_eval_last_run_timestamp`, `model_eval_prompts_total`, all labelled
+    `{category, model}`. Non-zero exit if overall pass rate falls below 40%
+    (belt-and-suspenders: fails the workflow *and* fires alert).
+  - `evals/cronworkflow.yaml` — schedule `17 */6 * * *`, `Forbid`
+    concurrency so overlapping runs don't stack.
+  - `apps/pushgateway.yaml` — installs `prometheus-pushgateway` v2.15.0 with
+    a `ServiceMonitor` labelled `release: kps` so the Kyverno label policy
+    is happy and Prometheus scrapes it automatically.
+- **Why**: `vllm:*` metrics tell you the *server* is healthy. They don't
+  tell you whether the *model* still produces correct answers after a
+  version bump, tokenizer change, or dtype flip. This closes that loop: a
+  regression in factual accuracy shows up in Grafana within 6h and fires an
+  alert, without any manual re-benchmarking.
+- **Dashboard**: `dashboards/model-quality.yaml` — 8 panels:
+  overall pass-rate stat, time-since-last-run, prompts/run, mean latency,
+  pass-rate-by-category timeseries, latency-by-category, response-token
+  length, and a horizontal bar-gauge showing the latest per-category rate.
+  `$model` template variable for multi-model deployments.
+- **Alerts** (`alerts/model-quality.yaml`):
+  - `ModelQualityLowOverallPassRate` — overall <70% for 30 min
+  - `ModelQualityCategoryRegressed` — a category fell below 50% (and was
+    ≥50% 24h ago) — catches regressions that overall averaging hides
+  - `ModelQualityEvalStale` — no eval metrics in 12h (CronWorkflow stuck?
+    Pushgateway down?)
+  - `ModelEvalLatencyHigh` — a category's mean prompt latency crosses 15s
+- **Editing the eval set**: the ConfigMap in `evals/prompts-configmap.yaml`
+  is source-of-truth. Add a line, `git push`, ArgoCD syncs, next CronWorkflow
+  run picks up new prompts automatically.
 
 ### kgateway rate limiting — cap per-source request rate
 

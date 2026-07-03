@@ -1,0 +1,51 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: model-quality
+  namespace: monitoring
+  labels:
+    release: kps
+spec:
+  groups:
+    - name: model.quality
+      interval: 1m
+      rules:
+        - alert: ModelQualityLowOverallPassRate
+          expr: min(model_eval_pass_rate{category="_all"}) < 0.70
+          for: 30m
+          labels:
+            severity: warning
+            slo: quality
+          annotations:
+            summary: "Model overall pass rate < 70% ({{ $labels.model }})"
+            description: "Latest eval pass rate is {{ $value | humanizePercentage }} across {{ $labels.model }}. Check dashboard `model-quality` and recent workflow logs for the failing categories."
+        - alert: ModelQualityCategoryRegressed
+          expr: |
+            (min by (category, model) (model_eval_pass_rate{category!="_all"}) < 0.50)
+            and on()
+            (min by (category, model) (model_eval_pass_rate{category!="_all"} offset 24h) >= 0.50)
+          for: 1h
+          labels:
+            severity: warning
+            slo: quality
+          annotations:
+            summary: "Category '{{ $labels.category }}' regressed below 50% (model {{ $labels.model }})"
+            description: "Pass rate for `{{ $labels.category }}` dropped to {{ $value | humanizePercentage }}; it was ≥50% 24h ago. Likely a prompt-template, dtype, or model-version regression."
+        - alert: ModelQualityEvalStale
+          expr: time() - max(model_eval_last_run_timestamp) > 43200
+          for: 15m
+          labels:
+            severity: warning
+            slo: quality
+          annotations:
+            summary: "No model-quality eval run in >12h"
+            description: "CronWorkflow `model-quality-eval` hasn't reported metrics. Check `kubectl -n argo get cronworkflow model-quality-eval` and Pushgateway `pushgateway-prometheus-pushgateway.monitoring:9091`."
+        - alert: ModelEvalLatencyHigh
+          expr: max(model_eval_latency_seconds{category!="_all"}) > 15
+          for: 30m
+          labels:
+            severity: warning
+            slo: quality
+          annotations:
+            summary: "Eval prompt latency > 15s ({{ $labels.category }} / {{ $labels.model }})"
+            description: "Response latency {{ $value | humanizeDuration }} for `{{ $labels.category }}`. Model is degrading, over-saturated, or streaming is broken."

@@ -1,0 +1,155 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: model-quality-eval
+  namespace: argo
+spec:
+  entrypoint: eval
+  serviceAccountName: argo-workflow
+  ttlStrategy:
+    secondsAfterCompletion: 86400
+  podGC:
+    strategy: OnWorkflowSuccess
+  arguments:
+    parameters:
+      - name: model
+        value: meta-llama/Meta-Llama-3-8B-Instruct
+      - name: vllm-url
+        value: http://llama-llama-8b.llama.svc.cluster.local:8000
+      - name: pushgateway-url
+        value: http://pushgateway-prometheus-pushgateway.monitoring.svc.cluster.local:9091
+      - name: max-tokens
+        value: "200"
+      - name: temperature
+        value: "0.1"
+      - name: image
+        value: python:3.11-slim
+  templates:
+    - name: eval
+      inputs:
+        parameters:
+          - {name: model}
+          - {name: vllm-url}
+          - {name: pushgateway-url}
+          - {name: max-tokens}
+          - {name: temperature}
+          - {name: image}
+      container:
+        image: "{{inputs.parameters.image}}"
+        command: [/bin/bash, -c]
+        env:
+          - name: MODEL
+            value: "{{inputs.parameters.model}}"
+          - name: VLLM_URL
+            value: "{{inputs.parameters.vllm-url}}"
+          - name: PUSHGATEWAY_URL
+            value: "{{inputs.parameters.pushgateway-url}}"
+          - name: MAX_TOKENS
+            value: "{{inputs.parameters.max-tokens}}"
+          - name: TEMPERATURE
+            value: "{{inputs.parameters.temperature}}"
+          - name: PROMPTS_FILE
+            value: /prompts/prompts.jsonl
+          - name: VLLM_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: vllm-api-key
+                key: token
+                optional: true
+        args:
+          - |
+            set -euo pipefail
+            pip install --quiet --root-user-action=ignore requests prometheus_client
+            python3 - <<'PY'
+            import json, re, os, time, sys
+            import requests
+            from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
+
+            VLLM_URL   = os.environ["VLLM_URL"]
+            MODEL      = os.environ["MODEL"]
+            API_KEY    = os.environ.get("VLLM_API_KEY", "")
+            PROMPTS    = os.environ["PROMPTS_FILE"]
+            PUSHGW     = os.environ["PUSHGATEWAY_URL"].rstrip("/")
+            MAX_TOK    = int(os.environ.get("MAX_TOKENS", "200"))
+            TEMP       = float(os.environ.get("TEMPERATURE", "0.1"))
+
+            reg = CollectorRegistry()
+            g_pass   = Gauge("model_eval_pass_rate", "fraction of prompts passing per category", ["category","model"], registry=reg)
+            g_lat    = Gauge("model_eval_latency_seconds", "mean response latency per category", ["category","model"], registry=reg)
+            g_tokens = Gauge("model_eval_response_tokens", "mean response tokens per category",   ["category","model"], registry=reg)
+            g_ts     = Gauge("model_eval_last_run_timestamp", "unix epoch of last eval run",       ["model"],            registry=reg)
+            g_total  = Gauge("model_eval_prompts_total", "prompts run per category",              ["category","model"], registry=reg)
+
+            with open(PROMPTS) as f:
+                prompts = [json.loads(l) for l in f if l.strip()]
+
+            headers = {"content-type": "application/json"}
+            if API_KEY:
+                headers["Authorization"] = f"Bearer {API_KEY}"
+
+            by_cat = {}
+            for p in prompts:
+                cat = p["category"]
+                d = by_cat.setdefault(cat, {"pass":0, "total":0, "lat":[], "tok":[]})
+                d["total"] += 1
+                try:
+                    t0 = time.time()
+                    r = requests.post(
+                        f"{VLLM_URL}/v1/chat/completions",
+                        json={
+                            "model": MODEL,
+                            "messages": [{"role":"user", "content": p["prompt"]}],
+                            "max_tokens": MAX_TOK,
+                            "temperature": TEMP,
+                        },
+                        headers=headers,
+                        timeout=90,
+                    )
+                    dt = time.time() - t0
+                    r.raise_for_status()
+                    body = r.json()
+                    resp = body["choices"][0]["message"]["content"]
+                    used = body.get("usage", {}).get("completion_tokens", 0)
+                    ok = bool(re.search(p["expected_regex"], resp))
+                    if ok:
+                        d["pass"] += 1
+                    d["lat"].append(dt)
+                    d["tok"].append(used)
+                    print(f"[{cat:12}] {p['id']:24} {'PASS' if ok else 'FAIL'} lat={dt:.2f}s tok={used}")
+                except Exception as e:
+                    print(f"[{cat:12}] {p['id']:24} ERROR {e}", file=sys.stderr)
+
+            overall_pass, overall_total = 0, 0
+            for cat, d in by_cat.items():
+                rate = d["pass"] / d["total"] if d["total"] else 0.0
+                lat  = sum(d["lat"]) / len(d["lat"]) if d["lat"] else 0.0
+                tok  = sum(d["tok"]) / len(d["tok"]) if d["tok"] else 0.0
+                g_pass.labels(category=cat,   model=MODEL).set(rate)
+                g_lat .labels(category=cat,   model=MODEL).set(lat)
+                g_tokens.labels(category=cat, model=MODEL).set(tok)
+                g_total .labels(category=cat, model=MODEL).set(d["total"])
+                overall_pass  += d["pass"]
+                overall_total += d["total"]
+                print(f"category={cat} pass_rate={rate:.2%} latency={lat:.2f}s ntok={tok:.0f}")
+
+            g_pass .labels(category="_all", model=MODEL).set(overall_pass / overall_total if overall_total else 0.0)
+            g_total.labels(category="_all", model=MODEL).set(overall_total)
+            g_ts.labels(model=MODEL).set(time.time())
+
+            print(f"overall pass_rate={overall_pass/overall_total:.2%} ({overall_pass}/{overall_total})")
+            push_to_gateway(PUSHGW, job="model-quality-eval", registry=reg)
+            print(f"pushed metrics to {PUSHGW}")
+
+            # non-zero exit if pass rate is atrocious → fails the workflow, alerts fire
+            if overall_total and (overall_pass / overall_total) < 0.4:
+                sys.exit(1)
+            PY
+        volumeMounts:
+          - {name: prompts, mountPath: /prompts}
+        resources:
+          requests: {cpu: "200m", memory: "256Mi"}
+          limits:   {cpu: "1",    memory: "512Mi"}
+      volumes:
+        - name: prompts
+          configMap:
+            name: model-eval-prompts
