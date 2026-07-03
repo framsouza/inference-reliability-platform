@@ -15,9 +15,11 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: llama-8b-epp
+        app.kubernetes.io/instance: llama
         app.kubernetes.io/component: inference-endpoint-picker
     spec:
       serviceAccountName: llama-8b-epp
+      priorityClassName: gpu-inference
       terminationGracePeriodSeconds: 30
       containers:
         - name: epp
@@ -30,22 +32,27 @@ spec:
             - --grpc-health-port=9003
             - --metrics-port=9090
             - --v=2
+            # vLLM 0.7.3 uses `gpu_cache_usage_perc`; EPP defaults are for newer vLLM.
+            - --kv-cache-usage-percentage-metric=vllm:gpu_cache_usage_perc
           ports:
             - {containerPort: 9002, name: grpc,        protocol: TCP}
             - {containerPort: 9003, name: grpc-health, protocol: TCP}
             - {containerPort: 9090, name: metrics,     protocol: TCP}
-          livenessProbe:
+          startupProbe:
             grpc:
               port: 9003
-              service: envoy.service.ext_proc.v3.ExternalProcessor
-            initialDelaySeconds: 10
-            periodSeconds: 30
+            periodSeconds: 5
+            failureThreshold: 60      # 5 minutes to finish pool sync
           readinessProbe:
             grpc:
               port: 9003
-              service: envoy.service.ext_proc.v3.ExternalProcessor
-            initialDelaySeconds: 5
             periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            grpc:
+              port: 9003
+            periodSeconds: 30
+            failureThreshold: 5
           resources:
             requests: {cpu: 200m, memory: 256Mi}
             limits:   {memory: 512Mi}
