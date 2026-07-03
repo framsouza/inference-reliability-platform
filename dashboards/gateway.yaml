@@ -1,0 +1,168 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-gateway
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  gateway.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "type": "stat", "title": "Requests / sec", "id": 1,
+          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "targets": [{"expr": "sum(rate(envoy_http_downstream_rq_total[5m]))", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "reqps"}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "Success rate (5m)", "id": 2,
+          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+          "targets": [{"expr": "sum(rate(envoy_http_downstream_rq_xx{envoy_response_code_class=~\"2|3\"}[5m])) / clamp_min(sum(rate(envoy_http_downstream_rq_xx[5m])), 0.0001)", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "decimals": 4, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.99}, {"color": "green", "value": 0.999}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "p95 latency", "id": 3,
+          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(envoy_http_downstream_rq_time_bucket[5m])) by (le)) / 1000", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 2}, {"color": "red", "value": 10}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "5xx / sec", "id": 4,
+          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+          "targets": [{"expr": "sum(rate(envoy_http_downstream_rq_xx{envoy_response_code_class=\"5\"}[5m]))", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "reqps", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.1}, {"color": "red", "value": 1}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "Rate limited / sec", "id": 5,
+          "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+          "targets": [{"expr": "sum(rate(envoy_http_local_rate_limit_rate_limited[5m]))", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "reqps"}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "Active connections", "id": 6,
+          "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+          "targets": [{"expr": "sum(envoy_http_downstream_cx_active)", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"}
+        },
+        {
+          "type": "timeseries", "title": "Requests by response class", "id": 7,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [
+            {"expr": "sum by (envoy_response_code_class) (rate(envoy_http_downstream_rq_xx[5m]))", "legendFormat": "{{envoy_response_code_class}}xx", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20, "stacking": {"mode": "normal"}}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Downstream latency (client-side)", "id": 8,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum(rate(envoy_http_downstream_rq_time_bucket[5m])) by (le)) / 1000", "legendFormat": "p50", "refId": "A"},
+            {"expr": "histogram_quantile(0.95, sum(rate(envoy_http_downstream_rq_time_bucket[5m])) by (le)) / 1000", "legendFormat": "p95", "refId": "B"},
+            {"expr": "histogram_quantile(0.99, sum(rate(envoy_http_downstream_rq_time_bucket[5m])) by (le)) / 1000", "legendFormat": "p99", "refId": "C"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Upstream (backend) latency", "id": 9,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "targets": [
+            {"expr": "histogram_quantile(0.95, sum by (le, envoy_cluster_name) (rate(envoy_cluster_upstream_rq_time_bucket[5m]))) / 1000", "legendFormat": "p95 {{envoy_cluster_name}}", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Upstream req/s by backend", "id": 10,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "targets": [
+            {"expr": "sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total[5m]))", "legendFormat": "{{envoy_cluster_name}}", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15, "stacking": {"mode": "normal"}}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Rate limit: allowed vs limited", "id": 11,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+          "targets": [
+            {"expr": "sum(rate(envoy_http_local_rate_limit_ok[5m]))", "legendFormat": "allowed", "refId": "A"},
+            {"expr": "sum(rate(envoy_http_local_rate_limit_rate_limited[5m]))", "legendFormat": "limited", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20, "stacking": {"mode": "normal"}}}, "overrides": [{"matcher": {"id": "byName", "options": "limited"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}]},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Upstream errors by backend (5xx + timeouts)", "id": 12,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+          "targets": [
+            {"expr": "sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_5xx[5m]))", "legendFormat": "5xx {{envoy_cluster_name}}", "refId": "A"},
+            {"expr": "sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_timeout[5m]))", "legendFormat": "timeout {{envoy_cluster_name}}", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "EPP endpoint-selection latency", "id": 13,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum(rate(inference_extension_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
+            {"expr": "histogram_quantile(0.95, sum(rate(inference_extension_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
+            {"expr": "histogram_quantile(0.99, sum(rate(inference_extension_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "InferencePool KV cache + queue signals (EPP)", "id": 14,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "targets": [
+            {"expr": "inference_pool_average_kv_cache_utilization * 100", "legendFormat": "avg KV cache %", "refId": "A"},
+            {"expr": "inference_pool_average_queue_size", "legendFormat": "avg queue size", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": [{"matcher": {"id": "byName", "options": "avg KV cache %"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "max", "value": 100}]}, {"matcher": {"id": "byName", "options": "avg queue size"}, "properties": [{"id": "unit", "value": "short"}, {"id": "custom.axisPlacement", "value": "right"}]}]},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Envoy data-plane connection pool", "id": 15,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+          "targets": [
+            {"expr": "sum by (envoy_cluster_name) (envoy_cluster_upstream_cx_active)", "legendFormat": "active {{envoy_cluster_name}}", "refId": "A"},
+            {"expr": "sum by (envoy_cluster_name) (envoy_cluster_upstream_rq_pending_active)", "legendFormat": "pending {{envoy_cluster_name}}", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Envoy Gateway data-plane resources", "id": 16,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+          "targets": [
+            {"expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"envoy-gateway-system\", pod=~\"envoy-.*\"}[5m]))", "legendFormat": "cpu {{pod}}", "refId": "A"},
+            {"expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"envoy-gateway-system\", pod=~\"envoy-.*\"})", "legendFormat": "mem {{pod}}", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": [{"matcher": {"id": "byRegexp", "options": "^mem"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.axisPlacement", "value": "right"}]}]},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["gateway", "envoy", "inference"],
+      "templating": {"list": []},
+      "time": {"from": "now-1h", "to": "now"},
+      "timezone": "browser",
+      "title": "Envoy Gateway (production)",
+      "uid": "envoy-gateway",
+      "version": 1
+    }

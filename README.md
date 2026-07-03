@@ -613,11 +613,34 @@ primitive, where it lives in the repo, and — importantly — **why** it exists
 - `VLLMGPUUnderutilized` — SM util <20% while queue depth >5 → batch size
   or dtype misconfigured; you're wasting GPU-hours.
 
-### Dashboards (`dashboards/vllm.yaml`)
+### Dashboards
 
-- **Throughput per hour** — generated tokens/hr and requests/hr trend
-- **GPU efficiency** — SM utilization overlaid with concurrent batch size;
-  the ratio tells you if you're GPU-bound or scheduler-bound
+- **`dashboards/vllm.yaml`** — vLLM engine internals: TTFT/ITL/e2e latency
+  percentiles, KV cache, prefix cache hit rate, prompt/generation length
+  histograms, throughput per hour, GPU efficiency overlaid with batch size.
+  Uid `vllm-inference`.
+- **`dashboards/gpu.yaml`** — DCGM signals: SM util, framebuffer, temp,
+  power, clocks, XID + ECC errors. Uid `nvidia-gpu-dcgm`.
+- **`dashboards/gateway.yaml`** *(new)* — production Envoy Gateway board:
+  req/s + success rate + p95 stats, requests by response class,
+  downstream vs upstream latency, per-backend req rate + errors, local
+  rate-limit allowed/limited, EPP endpoint-selection latency,
+  InferencePool KV-cache/queue avg (from EPP), Envoy data-plane
+  connection pool + CPU/mem. Needs `gateway/envoyproxy-config.yaml`
+  (enables Prometheus metrics on the proxy) + `gateway/envoy-podmonitor.yaml`
+  (scrape config). Uid `envoy-gateway`.
+- **`dashboards/inference-cost.yaml`** *(new)* — dollars view:
+  $ per 1M generated tokens, effective $/hr paid vs $/hr of useful work
+  (utilization-weighted, exposes idle waste), $/request, tokens per watt,
+  projected daily/monthly, prefix-cache "free" tokens saved. Constants
+  `$gpu_hour_cost` (default `$2.00` for L40S at cloud rates) and
+  `$gpu_count` (default `1`) at the top — set once per instance. Uid
+  `inference-cost`.
+- **`dashboards/model-quality.yaml`** — see below in the model-quality
+  section.
+
+All dashboards ship as ConfigMaps with `grafana_dashboard: "1"` — the
+Grafana sidecar picks them up automatically.
 
 ### Loki retention — bounded log storage
 

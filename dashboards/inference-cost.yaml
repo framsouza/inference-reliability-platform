@@ -1,0 +1,166 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-inference-cost
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  inference-cost.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "type": "stat", "title": "Cost / hour (fixed)", "id": 1,
+          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "targets": [{"expr": "$gpu_hour_cost * $gpu_count", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+        },
+        {
+          "type": "stat", "title": "Cost per 1M tokens (last 15m)", "id": 2,
+          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+          "targets": [{"expr": "($gpu_hour_cost * $gpu_count) / (sum(rate(vllm:generation_tokens_total[15m])) * 3600 / 1000000)", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 20}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "Generated tokens / sec", "id": 3,
+          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+          "targets": [{"expr": "sum(rate(vllm:generation_tokens_total[5m]))", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "GPU efficiency (SM util)", "id": 4,
+          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+          "targets": [{"expr": "avg(DCGM_FI_DEV_GPU_UTIL)", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 40}, {"color": "green", "value": 70}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "Prefix cache hit rate", "id": 5,
+          "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+          "targets": [{"expr": "sum(rate(vllm:gpu_prefix_cache_hits_total[5m])) / clamp_min(sum(rate(vllm:gpu_prefix_cache_queries_total[5m])), 0.0001)", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.3}, {"color": "green", "value": 0.6}]}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "stat", "title": "Requests / hour", "id": 6,
+          "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+          "targets": [{"expr": "sum(rate(vllm:request_success_total[5m])) * 3600", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        },
+        {
+          "type": "timeseries", "title": "Cost per 1M tokens (trend)", "id": 7,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [
+            {"expr": "($gpu_hour_cost * $gpu_count) / clamp_min(sum(rate(vllm:generation_tokens_total[5m])) * 3600 / 1000000, 0.0001)", "legendFormat": "$ / 1M generated tokens", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "currencyUSD", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20}, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 20}]}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "min", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Effective $/hour paid vs $/hour of useful work", "id": 8,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [
+            {"expr": "$gpu_hour_cost * $gpu_count", "legendFormat": "billed $/hr", "refId": "A"},
+            {"expr": "($gpu_hour_cost * $gpu_count) * (avg(DCGM_FI_DEV_GPU_UTIL) / 100)", "legendFormat": "productive $/hr (util-weighted)", "refId": "B"},
+            {"expr": "($gpu_hour_cost * $gpu_count) * (1 - avg(DCGM_FI_DEV_GPU_UTIL) / 100)", "legendFormat": "idle $/hr (wasted)", "refId": "C"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "currencyUSD", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}, "overrides": [{"matcher": {"id": "byName", "options": "idle $/hr (wasted)"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}]},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Token throughput vs cost", "id": 9,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "targets": [
+            {"expr": "sum(rate(vllm:generation_tokens_total[5m])) * 3600", "legendFormat": "generated tok/hr", "refId": "A"},
+            {"expr": "sum(rate(vllm:prompt_tokens_total[5m])) * 3600", "legendFormat": "prompt tok/hr", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "GPU utilization vs concurrency (efficiency)", "id": 10,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "targets": [
+            {"expr": "avg(DCGM_FI_DEV_GPU_UTIL)", "legendFormat": "SM util %", "refId": "A"},
+            {"expr": "sum(vllm:num_requests_running)", "legendFormat": "concurrent requests", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}, "overrides": [{"matcher": {"id": "byName", "options": "concurrent requests"}, "properties": [{"id": "unit", "value": "short"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "max", "value": null}]}]},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Cost per request", "id": 11,
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+          "targets": [
+            {"expr": "($gpu_hour_cost * $gpu_count) / clamp_min(sum(rate(vllm:request_success_total[5m])) * 3600, 0.0001)", "legendFormat": "$ / request", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 4, "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20}}},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "min", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries", "title": "Power draw ($$ proxy) vs work done", "id": 12,
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+          "targets": [
+            {"expr": "sum(DCGM_FI_DEV_POWER_USAGE)", "legendFormat": "watts", "refId": "A"},
+            {"expr": "sum(rate(vllm:generation_tokens_total[5m])) / clamp_min(sum(DCGM_FI_DEV_POWER_USAGE), 1)", "legendFormat": "tokens per watt", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "watt", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}, "overrides": [{"matcher": {"id": "byName", "options": "tokens per watt"}, "properties": [{"id": "unit", "value": "short"}, {"id": "custom.axisPlacement", "value": "right"}]}]},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "stat", "title": "Projected daily cost", "id": 13,
+          "gridPos": {"h": 4, "w": 8, "x": 0, "y": 28},
+          "targets": [{"expr": "$gpu_hour_cost * $gpu_count * 24", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+        },
+        {
+          "type": "stat", "title": "Projected monthly cost (30d)", "id": 14,
+          "gridPos": {"h": 4, "w": 8, "x": 8, "y": 28},
+          "targets": [{"expr": "$gpu_hour_cost * $gpu_count * 24 * 30", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 0}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+        },
+        {
+          "type": "stat", "title": "Prefix cache 'free' tokens (last 1h)", "id": 15,
+          "gridPos": {"h": 4, "w": 8, "x": 16, "y": 28},
+          "targets": [{"expr": "sum(increase(vllm:gpu_prefix_cache_hits_total[1h]))", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "green"}}},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["cost", "vllm", "gpu"],
+      "templating": {
+        "list": [
+          {
+            "name": "gpu_hour_cost",
+            "type": "constant",
+            "label": "GPU $/hour",
+            "query": "2.00",
+            "current": {"text": "2.00", "value": "2.00"}
+          },
+          {
+            "name": "gpu_count",
+            "type": "constant",
+            "label": "# GPUs",
+            "query": "1",
+            "current": {"text": "1", "value": "1"}
+          }
+        ]
+      },
+      "time": {"from": "now-6h", "to": "now"},
+      "timezone": "browser",
+      "title": "Inference cost",
+      "uid": "inference-cost",
+      "version": 1
+    }
