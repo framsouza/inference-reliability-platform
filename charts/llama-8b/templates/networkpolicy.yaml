@@ -18,10 +18,10 @@ spec:
     matchLabels: {{- include "llama.selectorLabels" . | nindent 6 }}
   policyTypes: [Ingress, Egress]
   ingress:
-    # Gateway → vLLM (via kgateway data plane in gateway ns)
+    # Gateway → vLLM (via Envoy Gateway data plane in envoy-gateway-system ns)
     - from:
         - namespaceSelector:
-            matchLabels: {kubernetes.io/metadata.name: gateway}
+            matchLabels: {kubernetes.io/metadata.name: envoy-gateway-system}
       ports:
         - {protocol: TCP, port: 8000}
     # Prometheus scrape → /metrics

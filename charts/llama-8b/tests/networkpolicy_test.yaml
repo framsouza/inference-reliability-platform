@@ -41,7 +41,7 @@ tests:
           content:
             namespaceSelector:
               matchLabels:
-                kubernetes.io/metadata.name: gateway
+                kubernetes.io/metadata.name: envoy-gateway-system
       - contains:
           path: spec.ingress[0].ports
           content:

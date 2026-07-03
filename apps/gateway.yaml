@@ -15,7 +15,7 @@ spec:
       recurse: true
   destination:
     server: https://kubernetes.default.svc
-    namespace: gateway
+    namespace: envoy-gateway-system
   syncPolicy:
     automated:
       prune: true
