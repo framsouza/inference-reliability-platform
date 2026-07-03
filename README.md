@@ -500,8 +500,9 @@ Uses `pytest`. Runs in <1s.
 ## Gateway
 
 All UIs and the vLLM API are exposed behind a single **kgateway** Gateway API
-Gateway (`gateway/public`), listener HTTP:80. Path-based routing —
-`http://<node-ip>/<prefix>`:
+Gateway (`gateway/public`), listener HTTP:**8080** (port 80 is claimed by
+k3s's bundled Traefik ingress — the Gateway sidesteps it on 8080). Publish
+port 8080 in Brev. Path-based routing — `http://<brev-url>/<prefix>`:
 
 | Path       | Service                       | HTTPRoute (`httproutes/`) | Purpose                             |
 |------------|-------------------------------|---------------------------|-------------------------------------|
