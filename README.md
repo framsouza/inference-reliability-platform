@@ -3,7 +3,7 @@
 A **Brev launchable** that stands up a production-shape vLLM inference
 platform on a single-GPU Kubernetes node — GitOps, KV-cache-aware
 routing, autoscaling, observability, policy enforcement, evals, load
-tests, CI and secret management with Vault and External Secrets Operator. **The design goal of this launchable is inference reliability.**
+tests, CI and secret management with Vault and External Secrets Operator. **The design goal of this launchable is inference reliability focusing on full stack observability from GPU to Inference Gateway, covering CI/CD unit tests, model evaluation and Inference scaling using KEDA.**
 
 One command bootstraps the whole stack. What you get:
 
