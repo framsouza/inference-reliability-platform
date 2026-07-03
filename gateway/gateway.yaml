@@ -4,11 +4,9 @@ metadata:
   name: public
   namespace: gateway
 spec:
-  gatewayClassName: kgateway
+  gatewayClassName: eg
   listeners:
     - name: http
-      # 8080 (not 80) because k3s ships Traefik which already binds :80 on the host.
-      # Brev's port publisher forwards to whatever port we tell it — publish 8080 there.
       port: 8080
       protocol: HTTP
       allowedRoutes:

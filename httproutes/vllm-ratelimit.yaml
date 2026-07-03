@@ -1,5 +1,5 @@
-apiVersion: gateway.kgateway.dev/v1alpha1
-kind: TrafficPolicy
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
 metadata:
   name: vllm-ratelimit
   namespace: llama
@@ -9,8 +9,9 @@ spec:
       kind: HTTPRoute
       name: vllm
   rateLimit:
+    type: Local
     local:
-      tokenBucket:
-        maxTokens: 60
-        tokensPerFill: 60
-        fillInterval: 60s
+      rules:
+        - limit:
+            requests: 60
+            unit: Minute

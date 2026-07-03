@@ -11,7 +11,7 @@ the rendered SVG. To regenerate after editing:
 
 ### Kubernetes infrastructure
 
-Namespaces, key controllers, and the control-plane arrows ArgoCD/ESO/kgateway
+Namespaces, key controllers, and the control-plane arrows ArgoCD/ESO/Envoy Gateway
 draw across them.
 
 ![Kubernetes infrastructure](images/k8s-infrastructure.svg)
@@ -39,7 +39,7 @@ bootstrap/       argocd install + root app
 charts/llama-8b/ vllm helm chart
 dashboards/      grafana dashboard ConfigMaps
 evals/           model-quality prompts + Argo CronWorkflow
-gateway/         kgateway Gateway resource
+gateway/         Envoy Gateway Gateway resource
 httproutes/      HTTPRoutes for each backend behind the Gateway
 images/          architecture diagrams (mermaid source + rendered svg)
 inference/       Gateway API Inference Extension — EPP + InferencePool
@@ -48,7 +48,7 @@ policies/        Kyverno ClusterPolicies (GPU shm, resource requests, prioritycl
 secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
-Sync waves: `-6` gateway-api-crds → `-5` kgateway-crds → `-4` kgateway →
+Sync waves: `-6` gateway-api-crds → `-4` envoy-gateway →
 `-3` inference-extension-crds → `-2` gateway → `0` gpu-operator, vault,
 external-secrets, kube-prometheus-stack, loki, tempo → `3` kyverno, keda →
 `5` secrets, otel-collector, dashboards, alerts, argo-workflows,
@@ -208,7 +208,7 @@ each vLLM pod's `/metrics` (KV cache pressure, queue depth, active LoRA
 adapters) and returns the least-loaded replica to Envoy.
 
 ```
-Client → kgateway (Envoy) ──ext_proc gRPC──▶ EPP ──scrapes /metrics──▶ vLLM pods
+Client → Envoy Gateway (Envoy) ──ext_proc gRPC──▶ EPP ──scrapes /metrics──▶ vLLM pods
                      ▲                           │
                      └─────picks endpoint────────┘
                           │
@@ -299,7 +299,7 @@ primitive, where it lives in the repo, and — importantly — **why** it exists
 ### Graceful shutdown — drain in-flight requests on rollout
 
 - **What**: `terminationGracePeriodSeconds: 120` and a `preStop` hook:
-  `sleep 15 && kill -TERM 1`. The `sleep 15` gives kgateway's EndpointSlice
+  `sleep 15 && kill -TERM 1`. The `sleep 15` gives Envoy Gateway's EndpointSlice
   removal time to propagate so no *new* requests land on the pod being drained;
   then SIGTERM lets vLLM's engine finish in-flight generations before exit.
 - **Why**: SIGTERM without a preStop drops every mid-stream generation as a
@@ -324,13 +324,13 @@ primitive, where it lives in the repo, and — importantly — **why** it exists
 
 - **What**: Two NetworkPolicies in `llama` ns. First (`*-default-deny`) selects
   all pods, all ingress/egress → nothing is allowed by default. Second
-  (`*-allow`) whitelists exactly: ingress from `gateway` (kgateway data plane
+  (`*-allow`) whitelists exactly: ingress from `gateway` (Envoy Gateway data plane
   on 8000), `monitoring` (Prometheus scrape), `argo` (in-cluster benchmarks);
   egress to kube-dns, `vault`, `monitoring` (OTLP 4317/4318), and public
   HTTPS (for HF first-boot download).
 - **Why**: In a default k8s cluster, every pod can reach every other pod. A
   compromised sidecar in `monitoring` or `argocd` can hit the vLLM API
-  directly on `llama-llama-8b:8000` bypassing kgateway (and its API-key check).
+  directly on `llama-llama-8b:8000` bypassing Envoy Gateway (and its API-key check).
   Default-deny + explicit allowlist means the only path to vLLM is through
   the Gateway.
 
@@ -340,7 +340,7 @@ primitive, where it lives in the repo, and — importantly — **why** it exists
   in Vault at `secret/vllm.apiKey`, materialized in `llama` ns via
   `secrets/vllm-api-key-external-secret.yaml` (ESO). Clients must send
   `Authorization: Bearer <key>` — vLLM's OpenAI-compat server enforces it.
-- **Why**: Once kgateway exposes `/v1` on port 80, anyone reachable to your
+- **Why**: Once Envoy Gateway exposes `/v1` on port 80, anyone reachable to your
   node has free unlimited access to the GPU. This is the single highest-
   severity security gap of the deployment. Auth is enforced *inside* vLLM
   (before your GPU cycles are spent), not at the gateway — so even
@@ -579,9 +579,9 @@ Uses `pytest`. Runs in <1s.
   is source-of-truth. Add a line, `git push`, ArgoCD syncs, next CronWorkflow
   run picks up new prompts automatically.
 
-### kgateway rate limiting — cap per-source request rate
+### Envoy Gateway rate limiting — cap per-source request rate
 
-- **What**: kgateway `TrafficPolicy` `vllm-ratelimit` attached to the `vllm`
+- **What**: Envoy Gateway `TrafficPolicy` `vllm-ratelimit` attached to the `vllm`
   HTTPRoute — local token bucket, 60 requests per 60 s, no coordination
   needed. Applies at the gateway before requests hit vLLM.
 - **Why**: A misconfigured client (or an abusive one) can queue up hundreds
@@ -593,7 +593,7 @@ Uses `pytest`. Runs in <1s.
 
 ## Gateway
 
-All UIs and the vLLM API are exposed behind a single **kgateway** Gateway API
+All UIs and the vLLM API are exposed behind a single **Envoy Gateway** Gateway API
 Gateway (`gateway/public`), listener HTTP:**8080** (port 80 is claimed by
 k3s's bundled Traefik ingress — the Gateway sidesteps it on 8080). Publish
 port 8080 in Brev. Path-based routing — `http://<brev-url>/<prefix>`:
@@ -605,7 +605,7 @@ port 8080 in Brev. Path-based routing — `http://<brev-url>/<prefix>`:
 | `/grafana` | `kps-grafana` (monitoring)    | `grafana.yaml`            | Grafana — dashboards + Explore      |
 | `/argo`    | `argo-workflows-server` (argo)| `argo-workflows.yaml`     | Argo Workflows UI — load-test runs  |
 
-Sync-wave order: gateway-api-crds `-6` → kgateway-crds `-5` → kgateway `-4` →
+Sync-wave order: gateway-api-crds `-6` → Envoy Gateway-crds `-5` → Envoy Gateway `-4` →
 gateway `-2` → httproutes `11` (after backends exist).
 
 The three UIs are configured to serve from their path prefix — no URLRewrite:
@@ -623,7 +623,7 @@ To add a new backend, drop an HTTPRoute in `httproutes/` referencing
 
 Only **port 80** needs to be exposed — Brev's port publisher can proxy it to
 the Gateway's LoadBalancer Service (`kubectl -n gateway get svc` shows the
-kgateway-managed LB Service, usually `public`). Point Brev at that Service on
+Envoy Gateway-managed LB Service, usually `public`). Point Brev at that Service on
 port 80:
 
 ```bash
