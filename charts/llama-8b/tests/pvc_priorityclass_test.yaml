@@ -1,0 +1,58 @@
+suite: pvc + priorityclass
+templates:
+  - pvc.yaml
+  - priorityclass.yaml
+release:
+  name: llama
+  namespace: llama
+tests:
+  - it: creates the HF cache PVC by default
+    template: pvc.yaml
+    asserts:
+      - equal:
+          path: kind
+          value: PersistentVolumeClaim
+      - equal:
+          path: metadata.name
+          value: llama-llama-8b-hf-cache
+      - equal:
+          path: spec.storageClassName
+          value: local-path
+      - equal:
+          path: spec.resources.requests.storage
+          value: 100Gi
+      - contains:
+          path: spec.accessModes
+          content: ReadWriteOnce
+
+  - it: skips PVC when persistence disabled
+    template: pvc.yaml
+    set:
+      persistence.hfCache.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: creates gpu-inference PriorityClass with very high value
+    template: priorityclass.yaml
+    asserts:
+      - equal:
+          path: kind
+          value: PriorityClass
+      - equal:
+          path: metadata.name
+          value: gpu-inference
+      - equal:
+          path: value
+          value: 1000000
+      - equal:
+          path: globalDefault
+          value: false
+
+  - it: skips PriorityClass when disabled
+    template: priorityclass.yaml
+    set:
+      priorityClass.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

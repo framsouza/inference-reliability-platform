@@ -363,24 +363,87 @@ primitive, where it lives in the repo, and — importantly — **why** it exists
 
 ### CI/CD — GitHub Actions block bad merges
 
-- **What**: `.github/workflows/ci.yml` runs on every PR and push to `main`:
-  - `yamllint` — style + syntax
-  - `shellcheck` — `bootstrap/install.sh` and any other shell
-  - `helm lint charts/llama-8b`
-  - `helm template … | kubeconform -strict` — validates rendered chart against
-    Kubernetes OpenAPI + community CRD schemas
-  - `find alerts dashboards gateway httproutes policies loadtests secrets evals
-    -name '*.yaml' | kubeconform …` — same for raw manifests
-  - `kyverno apply policies/ --resource <rendered-chart>` — dry-runs every
-    Kyverno ClusterPolicy against the chart output. Catches "would fail
-    admission" *before* ArgoCD applies it.
-  - `mermaid render` — every `.mmd` in `images/` must render without error
-  - `argocd-diff` — every file in `apps/` must be a valid ArgoCD Application
-- **Why**: ArgoCD auto-syncs. Bad YAML = silent sync failure that surfaces as
-  a red app hours later. CI catches all of that on the PR. A broken chart, a
-  policy that would deny the pod, a Kyverno rule that would rewrite the
-  runtime class wrongly — all fail the PR check.
-- **Where**: `.github/workflows/ci.yml`, `.yamllint.yaml`.
+Two workflows. **Every PR must pass all `ci.yml` jobs before merge.** The
+`e2e.yml` workflow triggers on chart/policy/route changes and takes ~4–6 min.
+
+**`.github/workflows/ci.yml`** — hygiene + rendering + admission checks (all
+under 30s each except kubeconform):
+
+| Job              | Catches                                                                               |
+|------------------|---------------------------------------------------------------------------------------|
+| `yamllint`       | YAML style + syntax                                                                    |
+| `shellcheck`     | Bugs in `bootstrap/install.sh`                                                         |
+| `helm-lint`      | Chart-level lint errors                                                                |
+| `helm-unittest`  | **Chart behavior regressions** — 35 assertions on the rendered chart (see below)       |
+| `python-tests`   | **Eval-script regressions** — 23 pytest cases mocking the vLLM endpoint                |
+| `kubeconform`    | Rendered chart or raw manifests violating Kubernetes / CRD schemas                     |
+| `kyverno`        | ClusterPolicies would deny the chart's Pods at admission                               |
+| `mermaid`        | Any `images/*.mmd` fails to render                                                     |
+| `argocd-diff`    | Any file under `apps/` isn't a valid ArgoCD `Application`                              |
+
+**`.github/workflows/e2e.yml`** — real cluster smoke:
+- Spins up kind (`kindest/node:v1.30.4`)
+- Installs Gateway API v1 CRDs, KEDA CRDs, Prometheus Operator CRDs, and
+  Kyverno (admission-controller only)
+- Applies our `policies/` ClusterPolicies
+- `helm install` the chart with a fake image (`nginx:alpine`) — the pod won't
+  serve, but *manifests must apply and Kyverno must not block them*
+- Verifies every expected resource exists (Deployment, Service, PVC,
+  NetworkPolicies, ServiceMonitor, PriorityClass)
+- Verifies the mutating policy stamped `runtimeClassName: nvidia` on the pod
+- Dumps events + Kyverno logs on failure
+
+**Why**: ArgoCD auto-syncs. Bad YAML = silent sync failure surfaced as a red
+app hours later. CI catches all of that on the PR:
+- Broken chart → `helm-unittest` fires immediately
+- Policy would deny the pod → `kyverno` job (dry-run) + `e2e` (real webhook)
+- Eval script regex regression → `python-tests`
+- Missing/renamed manifest → `argocd-diff` + `kubeconform`
+
+**Where**: `.github/workflows/ci.yml`, `.github/workflows/e2e.yml`,
+`.yamllint.yaml`.
+
+### Chart unit tests — `charts/llama-8b/tests/`
+
+Uses [helm-unittest](https://github.com/helm-unittest/helm-unittest). Each
+suite asserts on rendered YAML with no cluster required (<100ms total):
+
+- **`deployment_test.yaml`** — image pin, `runtimeClassName: nvidia`,
+  `priorityClassName: gpu-inference`, `terminationGracePeriodSeconds: 120`,
+  preStop drain command, resource requests, probe thresholds, HF cache mount,
+  HF token + API key wiring, OTLP env, prefix-caching flag toggle
+  (both bash-command and args-list branches), `Recreate` strategy invariant
+- **`networkpolicy_test.yaml`** — default-deny + allowlist rendered, correct
+  ingress rules for gateway/monitoring/argo namespaces, all disable-able
+- **`pvc_priorityclass_test.yaml`** — PVC size + storageClass + accessMode,
+  PriorityClass value, disable toggles
+- **`rollout_gate_test.yaml`** — PostSync hook annotation + delete policy,
+  `backoffLimit: 0`, threshold env vars propagated, in-cluster Service URL
+  (not external IP), disable toggles; ScaledObject targets llama-8b,
+  `maxReplicas: 1` invariant, Prometheus trigger uses vLLM metrics
+
+**Why chart unit tests specifically**: The single class of bug that causes
+production downtime here is a chart template regression that silently changes
+the rendered manifest. Someone edits `deployment.yaml` to fix an env var and
+accidentally drops the `preStop` hook — now every rollout kills in-flight
+requests. The chart unit test suite makes that a red CI check, not a customer
+incident.
+
+### Eval script tests — `evals/tests/`
+
+Uses `pytest`. Runs in <1s.
+
+- Regex scoring semantics — false positives (partial matches), edge cases
+- Prompt loading (blank lines, malformed JSON)
+- `evaluate_all` — pass/fail per response, error handling with mocked calls
+- `aggregate` — correct per-category counts + latency skip on errors
+- `call_vllm` — proper Authorization header when API key set, none when empty
+- `build_registry` — all metric families present, correct values, correct
+  labels, no-prompts edge case doesn't ZeroDivisionError
+- **ConfigMap drift check** — the script embedded in
+  `evals/script-configmap.yaml` must byte-match `evals/evaluator.py`.
+  Prevents "edited the script but forgot to sync the ConfigMap" bugs that
+  silently ship stale eval logic to the cluster.
 
 ### Model quality monitoring — eval loop into Prometheus + Grafana
 

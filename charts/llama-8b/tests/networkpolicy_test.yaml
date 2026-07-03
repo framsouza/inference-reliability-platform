@@ -1,0 +1,76 @@
+suite: networkpolicy
+templates:
+  - networkpolicy.yaml
+release:
+  name: llama
+  namespace: llama
+tests:
+  - it: renders a default-deny policy
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: kind
+          value: NetworkPolicy
+      - equal:
+          path: metadata.name
+          value: llama-llama-8b-default-deny
+      - contains:
+          path: spec.policyTypes
+          content: Ingress
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+
+  - it: renders an allowlist policy scoped to vLLM pods
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: kind
+          value: NetworkPolicy
+      - equal:
+          path: metadata.name
+          value: llama-llama-8b-allow
+      - isNotNullOrEmpty:
+          path: spec.podSelector.matchLabels
+
+  - it: allows gateway ns ingress on port 8000
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: gateway
+      - contains:
+          path: spec.ingress[0].ports
+          content:
+            protocol: TCP
+            port: 8000
+
+  - it: allows monitoring ns ingress (Prometheus scrape)
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: spec.ingress[1].from
+          content:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: monitoring
+
+  - it: allows argo ns ingress (load tests + evals)
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: spec.ingress[2].from
+          content:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: argo
+
+  - it: skips policies entirely when networkPolicy disabled
+    set:
+      networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

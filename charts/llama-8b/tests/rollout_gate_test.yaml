@@ -1,0 +1,116 @@
+suite: rollout gate + autoscaling
+templates:
+  - rollout-gate-job.yaml
+  - scaledobject.yaml
+release:
+  name: llama
+  namespace: llama
+tests:
+  # Rollout gate: PostSync hook that blocks bad promotions.
+  - it: rollout-gate ServiceAccount has PostSync hook annotation
+    template: rollout-gate-job.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: kind
+          value: ServiceAccount
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/hook"]
+          value: PostSync
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/hook-delete-policy"]
+          value: HookSucceeded
+
+  - it: rollout-gate Job has PostSync hook, never restarts, zero backoff
+    template: rollout-gate-job.yaml
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: kind
+          value: Job
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/hook"]
+          value: PostSync
+      - equal:
+          path: spec.backoffLimit
+          value: 0
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+
+  - it: rollout-gate propagates threshold env vars
+    template: rollout-gate-job.yaml
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MAX_P95_TTFT
+            value: "3"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MAX_ERROR_RATE
+            value: "0.02"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: NUM_PROMPTS
+            value: "30"
+
+  - it: rollout-gate hits in-cluster Service (not external IP)
+    template: rollout-gate-job.yaml
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: BASE_URL
+            value: "http://llama-llama-8b.llama.svc.cluster.local:8000"
+
+  - it: rollout-gate can be disabled cleanly
+    template: rollout-gate-job.yaml
+    set:
+      rolloutGate.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # ScaledObject drives autoscaling. maxReplicas is the safety valve — one GPU means max 1.
+  - it: ScaledObject targets the vLLM Deployment
+    template: scaledobject.yaml
+    asserts:
+      - equal:
+          path: kind
+          value: ScaledObject
+      - equal:
+          path: spec.scaleTargetRef.name
+          value: llama-llama-8b
+      - equal:
+          path: spec.scaleTargetRef.kind
+          value: Deployment
+
+  - it: ScaledObject respects single-GPU maxReplicas invariant
+    template: scaledobject.yaml
+    asserts:
+      - equal:
+          path: spec.maxReplicaCount
+          value: 1
+
+  - it: ScaledObject uses Prometheus trigger with vllm metrics
+    template: scaledobject.yaml
+    asserts:
+      - equal:
+          path: spec.triggers[0].type
+          value: prometheus
+      - matchRegex:
+          path: spec.triggers[0].metadata.query
+          pattern: "vllm:num_requests_running"
+
+  - it: autoscaling can be disabled cleanly
+    template: scaledobject.yaml
+    set:
+      autoscaling.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

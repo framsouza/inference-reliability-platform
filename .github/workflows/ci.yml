@@ -70,6 +70,28 @@ jobs:
           helm template llama charts/llama-8b > /tmp/chart.yaml
           kyverno apply policies/ --resource /tmp/chart.yaml --policy-report
 
+  helm-unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: {version: v3.15.3}
+      - name: install helm-unittest plugin
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --version 0.7.2 --verify=false
+      - name: run chart unit tests
+        run: helm unittest charts/llama-8b
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: 'pip'}
+      - name: install
+        run: pip install -r evals/tests/requirements.txt
+      - name: pytest
+        run: pytest evals/tests/ -v
+
   mermaid:
     runs-on: ubuntu-latest
     steps:

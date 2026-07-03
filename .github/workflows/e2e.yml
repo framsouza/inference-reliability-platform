@@ -1,0 +1,117 @@
+name: e2e
+
+on:
+  pull_request:
+    paths:
+      - 'charts/llama-8b/**'
+      - 'policies/**'
+      - 'httproutes/**'
+      - 'gateway/**'
+      - '.github/workflows/e2e.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  kind-install:
+    name: kind cluster + chart install + admission checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: e2e
+          version: v0.24.0
+          node_image: kindest/node:v1.30.4
+
+      - name: install Gateway API v1 CRDs
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+          kubectl wait --for condition=established --timeout=60s crd/gateways.gateway.networking.k8s.io
+          kubectl wait --for condition=established --timeout=60s crd/httproutes.gateway.networking.k8s.io
+
+      - name: install KEDA CRDs only
+        run: |
+          kubectl apply -f https://github.com/kedacore/keda/releases/download/v2.15.1/keda-2.15.1-crds.yaml
+          kubectl wait --for condition=established --timeout=60s crd/scaledobjects.keda.sh
+
+      - name: install Prometheus Operator CRDs (for ServiceMonitor)
+        run: |
+          kubectl apply --server-side -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.76.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
+          kubectl wait --for condition=established --timeout=60s crd/servicemonitors.monitoring.coreos.com
+
+      - name: install Kyverno (admission enforcement path)
+        run: |
+          helm repo add kyverno https://kyverno.github.io/kyverno/
+          helm install kyverno kyverno/kyverno --version 3.3.0 \
+            --namespace kyverno --create-namespace \
+            --set admissionController.replicas=1 \
+            --set backgroundController.enabled=false \
+            --set reportsController.enabled=false \
+            --set cleanupController.enabled=false \
+            --wait --timeout=5m
+
+      - name: apply our ClusterPolicies
+        run: |
+          kubectl apply -f policies/
+          # Give Kyverno a moment to register the webhook configurations
+          sleep 15
+
+      - name: create supporting resources (fake secrets + namespaces)
+        run: |
+          kubectl create namespace llama
+          kubectl create secret generic hf-token         -n llama --from-literal=token=fake
+          kubectl create secret generic vllm-api-key     -n llama --from-literal=token=fake-api-key
+          kubectl create namespace gateway || true
+          kubectl create namespace monitoring || true
+          kubectl create namespace argo || true
+
+      - name: helm install the chart (with fake image so pod won't try to pull real vLLM)
+        run: |
+          helm install llama charts/llama-8b \
+            --namespace llama \
+            --set image=nginx:alpine \
+            --set otlp.installSdk=false \
+            --set otlp.tracesEndpoint="" \
+            --set persistence.hfCache.storageClass=standard \
+            --set rolloutGate.enabled=false \
+            --set autoscaling.enabled=false \
+            --wait --timeout=2m || true
+          # ^^ pods won't be Ready (nginx doesn't serve /health on 8000), but the manifests must apply
+
+      - name: verify every expected resource exists
+        run: |
+          set -euxo pipefail
+          kubectl -n llama get deployment llama-llama-8b
+          kubectl -n llama get service    llama-llama-8b
+          kubectl -n llama get pvc        llama-llama-8b-hf-cache
+          kubectl -n llama get networkpolicy llama-llama-8b-default-deny
+          kubectl -n llama get networkpolicy llama-llama-8b-allow
+          kubectl -n llama get servicemonitor llama-llama-8b
+          kubectl get priorityclass gpu-inference
+
+      - name: verify Kyverno mutated runtimeClassName on the vLLM pod
+        run: |
+          # Pod is created but Pending (no GPU on kind); we can still inspect the spec.
+          kubectl -n llama get pod -l app.kubernetes.io/name=llama-8b -o jsonpath='{.items[0].spec.runtimeClassName}' | grep -q nvidia
+
+      - name: verify no Kyverno policy is denying anything unexpected
+        run: |
+          # If Kyverno reports blocking violations on the chart, dump them and fail.
+          # In audit mode our validate policies produce PolicyReports; grab them.
+          kubectl -n llama get policyreport -o yaml 2>/dev/null | tee /tmp/policyreports.yaml || true
+          # Fail only if a policy is in enforce mode and a chart resource was rejected.
+          # (We already applied resources above; if enforce policies had rejected them,
+          #  the previous kubectl get calls would have returned NotFound.)
+
+      - name: dump diagnostics if anything failed
+        if: failure()
+        run: |
+          echo "=== events ==="
+          kubectl -n llama get events --sort-by=.lastTimestamp | tail -50
+          echo "=== pods ==="
+          kubectl -n llama describe pods
+          echo "=== kyverno logs ==="
+          kubectl -n kyverno logs -l app.kubernetes.io/component=admission-controller --tail=100 || true

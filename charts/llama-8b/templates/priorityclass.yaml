@@ -3,7 +3,7 @@ apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: {{ .Values.priorityClass.name }}
-value: {{ .Values.priorityClass.value }}
+value: {{ int .Values.priorityClass.value }}
 globalDefault: false
 description: "GPU inference workloads — must not be evicted by best-effort pods"
 {{- end }}
