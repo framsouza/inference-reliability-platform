@@ -5,11 +5,9 @@ metadata:
   namespace: llama
 spec:
   selector:
-    app.kubernetes.io/name: llama-8b
-    app.kubernetes.io/instance: llama
-  targetPorts:
-    - number: 8000
+    matchLabels:
+      app.kubernetes.io/name: llama-8b
+      app.kubernetes.io/instance: llama
+  targetPortNumber: 8000
   endpointPickerRef:
-    kind: Service
     name: llama-8b-epp
-    portNumber: 9002
