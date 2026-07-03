@@ -1,0 +1,78 @@
+flowchart TB
+  subgraph external[External clients]
+    client([Client])
+    op([Operator])
+  end
+
+  subgraph node[k3s single-node cluster]
+    subgraph gw_stack[Gateway data path]
+      subgraph gateway_ns[ns: gateway]
+        gw[Gateway<br/>public :80]
+      end
+      subgraph kgw_ns[ns: kgateway-system]
+        kgwctrl[kgateway<br/>controller]
+      end
+    end
+
+    subgraph platform[Platform]
+      subgraph argocd_ns[ns: argocd]
+        argocd[argocd-server + controller<br/>reconciles from git]
+      end
+      subgraph vault_ns[ns: vault]
+        vault[vault-0<br/>dev mode]
+      end
+      subgraph eso_ns[ns: external-secrets]
+        eso[ESO<br/>vault → k8s Secrets]
+      end
+      subgraph kyverno_ns[ns: kyverno]
+        kyv[Kyverno<br/>admission + reports]
+      end
+      subgraph keda_ns[ns: keda]
+        keda[KEDA operator]
+      end
+      subgraph gpuop_ns[ns: gpu-operator]
+        dcgm[DCGM exporter]
+        devplug[nvidia device plugin]
+      end
+    end
+
+    subgraph inference[Inference]
+      subgraph llama_ns[ns: llama]
+        vllm[vLLM pod<br/>priorityClass=gpu-inference<br/>runtimeClass=nvidia<br/>GPU: 1]
+        pvc[(hf-cache PVC<br/>100Gi local-path)]
+        vllm_svc[Service llama-llama-8b :8000]
+        netpol{{NetworkPolicy<br/>default-deny + allowlist}}
+        vllm --- pvc
+      end
+    end
+
+    subgraph obs_ns[ns: monitoring]
+      prom[Prometheus]
+      graf[Grafana]
+      loki[Loki]
+      tempo[Tempo]
+      otel[OTel collector]
+      am[Alertmanager]
+    end
+
+    subgraph argo_ns[ns: argo]
+      argosrv[argo-workflows-server]
+      argoctl[workflow-controller]
+      benchtpl[vllm-bench<br/>WorkflowTemplate]
+    end
+  end
+
+  client -.HTTPS.-> gw
+  op -.git push.-> argocd
+  gw -->|reads| kgwctrl
+  argocd -.applies.-> gw
+  argocd -.applies.-> vllm
+  argocd -.applies.-> platform
+  argocd -.applies.-> obs_ns
+  eso -.reads.-> vault
+  gw -->|routes /v1| vllm_svc
+  vllm_svc --> vllm
+  gw -->|/grafana| graf
+  gw -->|/argocd| argocd
+  gw -->|/argo| argosrv
+  benchtpl -.spawns.-> vllm_svc

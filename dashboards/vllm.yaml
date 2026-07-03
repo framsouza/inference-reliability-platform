@@ -365,9 +365,33 @@ data:
           "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
         },
         {
+          "type": "timeseries",
+          "title": "Throughput per hour",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 92},
+          "id": 33,
+          "targets": [
+            {"expr": "sum(rate(vllm:generation_tokens_total{model_name=~\"$model\"}[5m])) * 3600", "legendFormat": "generated tokens/hr", "refId": "A"},
+            {"expr": "sum(rate(vllm:request_success_total{model_name=~\"$model\"}[5m])) * 3600", "legendFormat": "requests/hr", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}, "overrides": [{"matcher": {"id": "byName", "options": "requests/hr"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}]}]},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "GPU efficiency (SM util vs concurrency)",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 92},
+          "id": 34,
+          "targets": [
+            {"expr": "avg(DCGM_FI_DEV_GPU_UTIL)", "legendFormat": "SM util %", "refId": "A"},
+            {"expr": "sum(vllm:num_requests_running{model_name=~\"$model\"})", "legendFormat": "running batch", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15}}, "overrides": [{"matcher": {"id": "byName", "options": "running batch"}, "properties": [{"id": "unit", "value": "short"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "max", "value": null}]}]},
+          "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+        },
+        {
           "type": "logs",
           "title": "Recent errors (Loki)",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 92},
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 100},
           "id": 21,
           "datasource": {"type": "loki", "uid": "loki"},
           "targets": [{"expr": "{k8s_namespace_name=\"llama\"} |~ \"(?i)(error|traceback|exception|failed|abort)\"", "refId": "A"}],
@@ -398,5 +422,5 @@ data:
       "timezone": "browser",
       "title": "vLLM inference",
       "uid": "vllm-inference",
-      "version": 3
+      "version": 4
     }

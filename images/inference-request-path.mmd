@@ -1,0 +1,28 @@
+sequenceDiagram
+  participant C as Client
+  participant G as kgateway<br/>(gateway ns)
+  participant NP as NetworkPolicy<br/>(llama ns)
+  participant V as vLLM pod
+  participant GPU as NVIDIA GPU
+  participant OT as OTel collector
+  participant P as Prometheus
+
+  C->>G: POST /v1/chat/completions<br/>Authorization: Bearer <api-key>
+  Note over G: TrafficPolicy: token-bucket rate limit<br/>60 req/min per source
+  G->>NP: forward to llama-llama-8b:8000
+  Note over NP: allow ingress from gateway ns only
+  NP->>V: reach vLLM
+  V->>V: validate --api-key
+  Note over V: reject 401 if bad
+  V->>V: scheduler adds to running batch<br/>(KV cache alloc)
+  V->>GPU: forward pass (prefill)
+  GPU-->>V: first token
+  V-->>C: SSE stream start (TTFT)
+  loop until EOS / max_tokens
+    V->>GPU: decode step
+    GPU-->>V: next token
+    V-->>C: stream token
+  end
+  V->>OT: OTLP trace spans
+  V-)P: /metrics scrape (15s)
+  V->>V: request_success_total{finished_reason=stop|length|abort}

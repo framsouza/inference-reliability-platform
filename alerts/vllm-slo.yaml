@@ -81,6 +81,54 @@ spec:
           annotations:
             summary: "vLLM pod restarting"
             description: "Container {{ $labels.container }} in pod {{ $labels.pod }} restarted in the last 15m."
+        - alert: VLLMHighAbortRate
+          expr: |
+            sum(rate(vllm:request_success_total{finished_reason="abort"}[5m]))
+            /
+            clamp_min(sum(rate(vllm:request_success_total[5m])), 0.0001) > 0.02
+          for: 10m
+          labels:
+            severity: warning
+            slo: quality
+          annotations:
+            summary: "vLLM aborting >2% of requests"
+            description: "Client-cancelled / server-aborted requests are {{ $value | humanizePercentage }} of traffic. Usually TTFT too high causing client timeouts."
+        - alert: VLLMHighLengthTruncationRate
+          expr: |
+            sum(rate(vllm:request_success_total{finished_reason="length"}[10m]))
+            /
+            clamp_min(sum(rate(vllm:request_success_total[10m])), 0.0001) > 0.20
+          for: 30m
+          labels:
+            severity: info
+            slo: quality
+          annotations:
+            summary: ">20% of requests truncated by max_tokens"
+            description: "Client-supplied max_tokens is capping {{ $value | humanizePercentage }} of responses. Tune per-tenant defaults."
+        - alert: VLLMStartupFailing
+          expr: |
+            max_over_time(kube_pod_status_phase{namespace="llama", phase="Pending"}[35m]) == 1
+            or
+            (time() - max(kube_pod_start_time{namespace="llama"})) > 1800
+            and on() (sum(vllm:num_requests_running) or on() vector(0)) == 0
+          for: 5m
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "vLLM pod not serving after 30 min"
+            description: "Pod has been up >30 min without serving traffic. Model download stuck (HF token invalid?), OOM, or startup probe failing."
+        - alert: VLLMGPUUnderutilized
+          expr: |
+            avg(DCGM_FI_DEV_GPU_UTIL) < 20
+            and on() sum(vllm:num_requests_waiting) > 5
+          for: 10m
+          labels:
+            severity: warning
+            slo: efficiency
+          annotations:
+            summary: "GPU idle while queue is deep"
+            description: "SM utilization {{ $value }}% with >5 queued requests. Likely batch size / max-num-seqs too small, or dtype/quantization misconfigured."
     - name: vllm.slo.burnrate
       interval: 30s
       rules:

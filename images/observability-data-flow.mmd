@@ -1,0 +1,47 @@
+flowchart LR
+  subgraph sources[Signal sources]
+    vllm[vLLM pod]
+    dcgm[DCGM exporter]
+    ksm[kube-state-metrics]
+    ne[node-exporter]
+    kgw[kgateway]
+    stdout[Pod stdout/stderr]
+  end
+
+  subgraph collect[Collection]
+    otel[OTel collector DaemonSet]
+    prom[Prometheus<br/>6h retention]
+  end
+
+  subgraph store[Long-term stores]
+    loki[Loki<br/>168h retention]
+    tempo[Tempo]
+  end
+
+  subgraph consume[Consumption]
+    graf[Grafana]
+    am[Alertmanager]
+    rules[PrometheusRule<br/>SLO + GPU + burn-rate]
+  end
+
+  vllm -->|OTLP traces| otel
+  vllm -->|/metrics scrape 15s| prom
+  vllm --> stdout
+  dcgm -->|scrape| prom
+  ksm -->|scrape| prom
+  ne -->|scrape| prom
+  kgw -->|/metrics| prom
+  stdout -->|filelog receiver| otel
+
+  otel -->|traces| tempo
+  otel -->|logs| loki
+  otel -->|remote_write| prom
+
+  prom --> rules
+  rules --> am
+  prom --> graf
+  loki --> graf
+  tempo --> graf
+
+  graf -.exemplars.-> tempo
+  tempo -.derived logs.-> loki

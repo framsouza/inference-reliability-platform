@@ -7,6 +7,7 @@ GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 GITHUB_USER="${GITHUB_USER:-git}"
 REPO_URL="${REPO_URL:-https://github.com/framsouza/nvidia-brev-vllm.git}"
 HF_TOKEN="${HF_TOKEN:-}"
+VLLM_API_KEY="${VLLM_API_KEY:-$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
 
 if [[ -z "${GITHUB_TOKEN}" ]]; then
   echo "GITHUB_TOKEN not set — export it and re-run" >&2
@@ -60,6 +61,10 @@ kubectl -n vault exec -i vault-0 -- sh -c \
 kubectl -n vault exec -i vault-0 -- sh -c \
   "VAULT_TOKEN=root vault kv put secret/github \
      url='${REPO_URL}' username='${GITHUB_USER}' password='${GITHUB_TOKEN}'"
+kubectl -n vault exec -i vault-0 -- sh -c \
+  "VAULT_TOKEN=root vault kv put secret/vllm apiKey='${VLLM_API_KEY}'"
+echo "vLLM API key seeded. Save this — clients must send it as \`Authorization: Bearer <key>\`:"
+echo "  ${VLLM_API_KEY}"
 
 echo "waiting for ExternalSecret CRDs to be registered..."
 until kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1; do sleep 5; done
