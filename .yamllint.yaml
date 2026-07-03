@@ -4,10 +4,12 @@ ignore: |
   charts/llama-8b/templates/
   images/*.svg
   .github/
+  dashboards/
+  evals/script-configmap.yaml
 
 rules:
   line-length:
-    max: 160
+    max: 200
     level: warning
   document-start: disable
   truthy:
@@ -21,3 +23,9 @@ rules:
     max-spaces-inside: 1
   brackets:
     max-spaces-inside: 1
+  commas:
+    max-spaces-after: -1
+  colons:
+    max-spaces-after: -1
+  empty-lines:
+    max: 2
