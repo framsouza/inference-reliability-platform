@@ -13,6 +13,12 @@ spec:
         - path:
             type: PathPrefix
             value: /argo
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
       backendRefs:
         - name: argo-workflows-server
           port: 2746
