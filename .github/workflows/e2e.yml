@@ -59,9 +59,34 @@ jobs:
           kubectl apply --server-side -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.76.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
           kubectl wait --for condition=established --timeout=60s crd/servicemonitors.monitoring.coreos.com
 
-      - name: install Argo Workflows CRD (referenced by mutate-workflow-ttl policy)
+      - name: install minimal Argo Workflows CRD (referenced by mutate-workflow-ttl policy)
+        # The upstream v3.6.2 CRD uses schemaless fields that k8s 1.30 rejects
+        # for structural-schema violations. We don't need the full schema in
+        # e2e — Kyverno only needs to resolve group/version/resource. This
+        # inline CRD satisfies both.
         run: |
-          kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-workflows/v3.6.2/manifests/base/crds/full/argoproj.io_workflows.yaml
+          cat <<'EOF' | kubectl apply --server-side -f -
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          metadata:
+            name: workflows.argoproj.io
+          spec:
+            group: argoproj.io
+            scope: Namespaced
+            names:
+              kind: Workflow
+              plural: workflows
+              singular: workflow
+              shortNames: [wf]
+            versions:
+              - name: v1alpha1
+                served: true
+                storage: true
+                schema:
+                  openAPIV3Schema:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+          EOF
           for i in $(seq 1 30); do
             status=$(kubectl get crd workflows.argoproj.io \
               -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null || true)
