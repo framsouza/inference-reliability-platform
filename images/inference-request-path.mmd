@@ -1,6 +1,7 @@
 sequenceDiagram
   participant C as Client
   participant G as kgateway<br/>(gateway ns)
+  participant E as EPP<br/>(llama ns)
   participant NP as NetworkPolicy<br/>(llama ns)
   participant V as vLLM pod
   participant GPU as NVIDIA GPU
@@ -9,7 +10,11 @@ sequenceDiagram
 
   C->>G: POST /v1/chat/completions<br/>Authorization: Bearer <api-key>
   Note over G: TrafficPolicy: token-bucket rate limit<br/>60 req/min per source
-  G->>NP: forward to llama-llama-8b:8000
+  G->>E: ext_proc gRPC — pick endpoint for /v1<br/>(InferencePool = llama-8b)
+  E->>V: scrape /metrics (KV cache %, queue depth)
+  V-->>E: metrics
+  E-->>G: chosen pod IP (least-loaded scoring)
+  G->>NP: forward to <chosen-vllm-pod>:8000
   Note over NP: allow ingress from gateway ns only
   NP->>V: reach vLLM
   V->>V: validate --api-key
@@ -25,4 +30,5 @@ sequenceDiagram
   end
   V->>OT: OTLP trace spans
   V-)P: /metrics scrape (15s)
+  E-)P: /metrics scrape (per-request EPP scoring stats)
   V->>V: request_success_total{finished_reason=stop|length|abort}

@@ -1,0 +1,15 @@
+apiVersion: inference.networking.k8s.io/v1
+kind: InferencePool
+metadata:
+  name: llama-8b
+  namespace: llama
+spec:
+  selector:
+    app.kubernetes.io/name: llama-8b
+    app.kubernetes.io/instance: llama
+  targetPorts:
+    - number: 8000
+  endpointPickerRef:
+    kind: Service
+    name: llama-8b-epp
+    portNumber: 9002

@@ -59,6 +59,18 @@ jobs:
           kubectl apply --server-side -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.76.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
           kubectl wait --for condition=established --timeout=60s crd/servicemonitors.monitoring.coreos.com
 
+      - name: install Gateway API Inference Extension CRDs
+        run: |
+          # v1.5.0 config/crd/bases has: inferencepools.inference.networking.k8s.io (v1)
+          # and inferenceobjectives.inference.networking.x-k8s.io (v1alpha2).
+          kubectl apply --server-side -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api-inference-extension/v1.5.0/config/crd/bases/inference.networking.k8s.io_inferencepools.yaml
+          for i in $(seq 1 30); do
+            status=$(kubectl get crd inferencepools.inference.networking.k8s.io \
+              -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null || true)
+            [ "$status" = "True" ] && break
+            sleep 2
+          done
+
       - name: install minimal Argo Workflows CRD (referenced by mutate-workflow-ttl policy)
         # The upstream v3.6.2 CRD uses schemaless fields that k8s 1.30 rejects
         # for structural-schema violations. We don't need the full schema in

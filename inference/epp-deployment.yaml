@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-8b-epp
+  namespace: llama
+  labels:
+    app.kubernetes.io/name: llama-8b-epp
+    app.kubernetes.io/component: inference-endpoint-picker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llama-8b-epp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llama-8b-epp
+        app.kubernetes.io/component: inference-endpoint-picker
+    spec:
+      serviceAccountName: llama-8b-epp
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: epp
+          image: registry.k8s.io/gateway-api-inference-extension/epp:v1.5.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --pool-name=llama-8b
+            - --pool-namespace=llama
+            - --grpc-port=9002
+            - --grpc-health-port=9003
+            - --metrics-port=9090
+            - --v=2
+          ports:
+            - {containerPort: 9002, name: grpc,        protocol: TCP}
+            - {containerPort: 9003, name: grpc-health, protocol: TCP}
+            - {containerPort: 9090, name: metrics,     protocol: TCP}
+          livenessProbe:
+            grpc:
+              port: 9003
+              service: envoy.service.ext_proc.v3.ExternalProcessor
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            grpc:
+              port: 9003
+              service: envoy.service.ext_proc.v3.ExternalProcessor
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 200m, memory: 256Mi}
+            limits:   {memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-8b-epp
+  namespace: llama
+  labels:
+    app.kubernetes.io/name: llama-8b-epp
+spec:
+  selector:
+    app.kubernetes.io/name: llama-8b-epp
+  ports:
+    - {name: grpc,        port: 9002, targetPort: grpc,        appProtocol: gRPC}
+    - {name: grpc-health, port: 9003, targetPort: grpc-health, appProtocol: gRPC}
+    - {name: metrics,     port: 9090, targetPort: metrics}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: llama-8b-epp
+  namespace: llama
+  labels:
+    release: kps
+    app.kubernetes.io/name: llama-8b-epp
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llama-8b-epp
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s

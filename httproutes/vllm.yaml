@@ -14,5 +14,6 @@ spec:
             type: PathPrefix
             value: /v1
       backendRefs:
-        - name: llama-llama-8b
-          port: 8000
+        - group: inference.networking.k8s.io
+          kind: InferencePool
+          name: llama-8b

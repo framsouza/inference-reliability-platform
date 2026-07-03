@@ -42,17 +42,18 @@ evals/           model-quality prompts + Argo CronWorkflow
 gateway/         kgateway Gateway resource
 httproutes/      HTTPRoutes for each backend behind the Gateway
 images/          architecture diagrams (mermaid source + rendered svg)
-inference/       (reserved) InferencePool + InferenceObjective
+inference/       Gateway API Inference Extension — EPP + InferencePool
 loadtests/argo/  Argo WorkflowTemplate for vllm-bench + CLI toolbox
 policies/        Kyverno ClusterPolicies (GPU shm, resource requests, priorityclass, runtime class, ServiceMonitor label…)
 secrets/         ClusterSecretStore + ExternalSecrets
 ```
 
 Sync waves: `-6` gateway-api-crds → `-5` kgateway-crds → `-4` kgateway →
-`-2` gateway → `0` gpu-operator, vault, external-secrets,
-kube-prometheus-stack, loki, tempo → `3` kyverno, keda → `5` secrets,
-otel-collector, dashboards, alerts, argo-workflows, pushgateway →
-`7` policies → `10` llama → `11` httproutes → `12` evals → `20` loadtests.
+`-3` inference-extension-crds → `-2` gateway → `0` gpu-operator, vault,
+external-secrets, kube-prometheus-stack, loki, tempo → `3` kyverno, keda →
+`5` secrets, otel-collector, dashboards, alerts, argo-workflows,
+pushgateway → `7` policies → `10` llama → `11` httproutes,
+inference-extension → `12` evals → `20` loadtests.
 
 ## 1. Host
 
@@ -189,6 +190,65 @@ kubectl run dcgm-diag --rm -it --restart=Never \
   --image=nvcr.io/nvidia/cloud-native/dcgm:3.3.5-1-ubuntu22.04 \
   --overrides='{"spec":{"runtimeClassName":"nvidia","containers":[{"name":"dcgm-diag","image":"nvcr.io/nvidia/cloud-native/dcgm:3.3.5-1-ubuntu22.04","command":["dcgmi","diag","-r","2"],"resources":{"limits":{"nvidia.com/gpu":1}}}]}}'
 ```
+
+## Gateway API Inference Extension
+
+The vLLM data-path uses the [Gateway API Inference Extension](https://github.com/kubernetes-sigs/gateway-api-inference-extension)
+(v1.5.0). Instead of routing to the vLLM Service directly, the `vllm`
+HTTPRoute now points at an `InferencePool` — a smart backend that consults
+an out-of-process **Endpoint Picker (EPP)** on every request. The EPP reads
+each vLLM pod's `/metrics` (KV cache pressure, queue depth, active LoRA
+adapters) and returns the least-loaded replica to Envoy.
+
+```
+Client → kgateway (Envoy) ──ext_proc gRPC──▶ EPP ──scrapes /metrics──▶ vLLM pods
+                     ▲                           │
+                     └─────picks endpoint────────┘
+                          │
+                          ▼
+                     forward request to chosen pod
+```
+
+**Resources** (`inference/`):
+- `epp-rbac.yaml` — ServiceAccount + ClusterRole + binding. EPP needs to
+  list pods/endpointslices/services, and read InferencePool /
+  InferenceObjective / HTTPRoute.
+- `epp-deployment.yaml` — EPP `Deployment` (single replica, 200m CPU /
+  256Mi mem), `Service` (grpc:9002, grpc-health:9003, metrics:9090),
+  `ServiceMonitor` (metrics scrape at 15s). Image
+  `registry.k8s.io/gateway-api-inference-extension/epp:v1.5.0`.
+- `inferencepool.yaml` — `InferencePool` `llama-8b` matching the vLLM pods
+  by their standard `app.kubernetes.io/name + instance` labels, pointing at
+  the EPP Service.
+
+**HTTPRoute change** (`httproutes/vllm.yaml`):
+```yaml
+backendRefs:
+  - group: inference.networking.k8s.io
+    kind: InferencePool
+    name: llama-8b
+```
+(was `backendRefs.name: llama-llama-8b, port: 8000` — a plain Service ref.)
+
+**Sync waves**: CRDs at `-3` (before workloads), EPP + InferencePool at `11`
+(after llama Deployment exists so pod-label selector resolves).
+
+### Honest assessment on a single vLLM replica
+
+With N=1, endpoint scoring picks the same pod every request — no routing
+improvement over a plain Service. What you *do* get:
+- **Per-request observability** — EPP exports Prometheus metrics for
+  scoring inputs (KV cache % it saw, queue depth, chosen model), scraped
+  automatically via the `ServiceMonitor` above. Useful even at N=1.
+- **Priority/fairness enforcement** if you add `InferenceObjective`
+  resources for different client tiers (not shipped by default — add when
+  you have real tenants).
+- **API-portable scale-out path** — the day you add a second GPU node and
+  bump `replicas`, the routing gets meaningfully smarter with zero config
+  changes.
+
+Cost: ~200 MiB RAM for the EPP pod + a 1–3 ms ext_proc gRPC hop on every
+request.
 
 ## Reliability & scalability
 
