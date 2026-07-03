@@ -1,0 +1,60 @@
+flowchart TB
+  subgraph external[External / Brev port 8080]
+    client([Client])
+  end
+
+  subgraph egs[ns: envoy-gateway-system]
+    egdp[envoy data-plane pod<br/>listens :8080]
+  end
+
+  subgraph mon[ns: monitoring]
+    prom[Prometheus]
+    graf[Grafana]
+    otel[OTel collector]
+  end
+
+  subgraph argons[ns: argo]
+    bench[vllm-bench Workflow]
+    eval[model-quality-eval Workflow]
+  end
+
+  subgraph llama[ns: llama]
+    subgraph nps[NetworkPolicies]
+      denyAll{{default-deny<br/>selects all pods}}
+      allowVllm{{allow — targets vLLM pods<br/>ingress: envoy-gateway-system:8000<br/>monitoring:8000, argo:8000<br/>egress: kube-dns, vault, otel, HuggingFace}}
+      allowEpp{{allow — targets EPP pods<br/>ingress: envoy-gateway-system:9002/9003<br/>monitoring:9090<br/>egress: kube-dns, k8s-API :443, vLLM:8000}}
+      allowScrape{{allow — targets vLLM<br/>ingress from EPP :8000}}
+    end
+    vllm[vLLM pod<br/>:8000]
+    epp[EPP pod<br/>:9002 gRPC ext_proc<br/>:9090 metrics]
+    vault_svc[Vault Service<br/>kube-apiserver, HuggingFace<br/>are egress destinations]
+  end
+
+  subgraph vault_ns[ns: vault]
+    vault[vault-0]
+  end
+
+  subgraph kube[ns: kube-system]
+    dns[coredns]
+  end
+
+  client -->|HTTP :8080| egdp
+  egdp -->|/v1 → vLLM Service :8000<br/>NP: allowVllm| vllm
+  egdp -->|ext_proc gRPC :9002<br/>NP: allowEpp ingress| epp
+
+  epp -->|scrape /metrics :8000<br/>NP: allowScrape ingress on vLLM| vllm
+  epp -->|list pods, endpointslices<br/>watches InferencePool CRDs<br/>NP: egress to :443| kube_api[(k8s API :443)]
+  epp -->|DNS resolve| dns
+
+  prom -->|scrape :8000 vllm-servicemonitor<br/>NP: allowVllm ingress| vllm
+  prom -->|scrape :9090 epp-servicemonitor<br/>NP: allowEpp ingress| epp
+  vllm -->|OTLP :4317 traces<br/>NP: allowVllm egress| otel
+  vllm -->|/metrics scrape from monitoring| prom
+
+  bench -->|POST /v1 to vLLM Service :8000<br/>NP: allowVllm ingress| vllm
+  eval  -->|POST /v1 to vLLM Service :8000<br/>NP: allowVllm ingress| vllm
+  vllm -->|read HF token from ESO Secret<br/>egress via ESO stored k8s Secret| vault_svc
+
+  vllm -.->|first-boot only<br/>NP: egress to 0.0.0.0/0 :443<br/>except private ranges| hf[(HuggingFace Hub<br/>huggingface.co)]
+
+  Note1["Chart NP files: charts/llama-8b/templates/networkpolicy.yaml<br/>EPP NP file: inference/epp-networkpolicy.yaml"]

@@ -1,16 +1,18 @@
 flowchart LR
   subgraph sources[Signal sources]
-    vllm[vLLM pod]
+    vllm[vLLM pod<br/>/metrics + OTLP + stdout]
+    epp[EPP<br/>/metrics scoring stats]
     dcgm[DCGM exporter]
     ksm[kube-state-metrics]
     ne[node-exporter]
-    kgw[kgateway]
-    stdout[Pod stdout/stderr]
+    egdp[Envoy Gateway data-plane<br/>/stats]
+    eval[model-quality-eval<br/>CronWorkflow]
   end
 
   subgraph collect[Collection]
-    otel[OTel collector DaemonSet]
-    prom[Prometheus<br/>6h retention]
+    otel[OTel collector<br/>DaemonSet]
+    pushgw[Pushgateway<br/>batch metrics]
+    prom[Prometheus<br/>6h local retention]
   end
 
   subgraph store[Long-term stores]
@@ -19,19 +21,21 @@ flowchart LR
   end
 
   subgraph consume[Consumption]
-    graf[Grafana]
+    graf[Grafana<br/>dashboards: vLLM, GPU, model-quality]
     am[Alertmanager]
-    rules[PrometheusRule<br/>SLO + GPU + burn-rate]
+    rules[PrometheusRule<br/>SLO + GPU + model-quality]
   end
 
   vllm -->|OTLP traces| otel
   vllm -->|/metrics scrape 15s| prom
-  vllm --> stdout
+  vllm --> stdout[stdout] --> otel
+  epp -->|/metrics scrape 15s| prom
   dcgm -->|scrape| prom
   ksm -->|scrape| prom
   ne -->|scrape| prom
-  kgw -->|/metrics| prom
-  stdout -->|filelog receiver| otel
+  egdp -->|/stats| prom
+  eval -->|prom_client push| pushgw
+  pushgw -->|scrape 15s| prom
 
   otel -->|traces| tempo
   otel -->|logs| loki

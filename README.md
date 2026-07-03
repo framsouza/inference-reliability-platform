@@ -5,31 +5,253 @@ vLLM serving Llama-3-8B on a single-GPU k3s node. ArgoCD does the deploys, Vault
 
 ## Architecture
 
-Diagrams live in [`images/`](images/) — both the Mermaid source (`.mmd`) and
-the rendered SVG. To regenerate after editing:
-`npx -p @mermaid-js/mermaid-cli mmdc -i images/<name>.mmd -o images/<name>.svg -b white`.
+Diagrams live in [`images/`](images/) as Mermaid source (`.mmd`) — GitHub
+renders the `mermaid` code blocks below inline. Edit either the `.mmd` file
+or the block in this README; keep them in sync.
 
 ### Kubernetes infrastructure
 
-Namespaces, key controllers, and the control-plane arrows ArgoCD/ESO/Envoy Gateway
-draw across them.
+Namespaces, key controllers, and the control-plane arrows ArgoCD/ESO/Envoy
+Gateway draw across them. Source: [`images/k8s-infrastructure.mmd`](images/k8s-infrastructure.mmd).
 
-![Kubernetes infrastructure](images/k8s-infrastructure.svg)
+```mermaid
+flowchart TB
+  subgraph external[External]
+    client([Client])
+    op([Operator])
+  end
+
+  subgraph node[k3s single-node cluster]
+    subgraph platform[Platform]
+      subgraph argocd_ns[ns: argocd]
+        argocd[argocd-server + controller]
+      end
+      subgraph vault_ns[ns: vault]
+        vault[vault-0 dev mode]
+      end
+      subgraph eso_ns[ns: external-secrets]
+        eso[ESO]
+      end
+      subgraph kyverno_ns[ns: kyverno]
+        kyv[Kyverno]
+      end
+      subgraph keda_ns[ns: keda]
+        keda[KEDA operator]
+      end
+      subgraph gpuop_ns[ns: gpu-operator]
+        dcgm[DCGM exporter]
+        devplug[nvidia device plugin]
+      end
+    end
+
+    subgraph gw_stack[ns: envoy-gateway-system]
+      egctrl[envoy-gateway controller]
+      egdp[envoy data-plane<br/>Deployment + LB Service :8080]
+      gwres[Gateway 'public']
+      gwclass[GatewayClass 'eg']
+    end
+
+    subgraph inference[Inference — ns: llama]
+      vllm[vLLM pod]
+      pvc[(hf-cache PVC 100Gi)]
+      vllm_svc[Service llama-llama-8b :8000]
+      epp[EPP :9002]
+      epp_svc[Service llama-8b-epp]
+      ipool[InferencePool llama-8b]
+      vllm --- pvc
+      epp --- epp_svc
+    end
+
+    subgraph obs_ns[ns: monitoring]
+      prom[Prometheus]
+      graf[Grafana]
+      loki[Loki]
+      tempo[Tempo]
+      otel[OTel collector]
+      am[Alertmanager]
+      pushgw[Pushgateway]
+    end
+
+    subgraph argo_ns[ns: argo]
+      argosrv[argo-workflows-server]
+      benchtpl[bench + eval WorkflowTemplates]
+    end
+  end
+
+  client -.HTTP :8080.-> egdp
+  op -.git push.-> argocd
+  egctrl --programs--> egdp
+  argocd -.applies.-> gwres
+  argocd -.applies.-> vllm
+  argocd -.applies.-> platform
+  argocd -.applies.-> obs_ns
+  argocd -.applies.-> ipool
+  argocd -.applies.-> epp
+  eso -.reads.-> vault
+  egdp -->|/v1| vllm_svc
+  egdp -.ext_proc.-> epp_svc
+  epp -.scrapes.-> vllm
+  vllm_svc --> vllm
+  egdp -->|/grafana| graf
+  egdp -->|/argocd| argocd
+  egdp -->|/argo| argosrv
+  benchtpl -.spawns.-> vllm_svc
+  benchtpl -.push metrics.-> pushgw
+```
 
 ### Inference request path
 
-What happens on a single `POST /v1/chat/completions` — gateway rate limit,
-NetworkPolicy filter, API-key check, batch scheduling, GPU prefill/decode
-loop, and the trace/metric side-effects.
+What happens on a single `POST /v1/chat/completions` — Envoy Gateway rate
+limit, `EnvoyExtensionPolicy` calling EPP for endpoint selection, then
+NetworkPolicy filter, API-key check, GPU prefill/decode, side-effect
+metrics. Source: [`images/inference-request-path.mmd`](images/inference-request-path.mmd).
 
-![Inference request path](images/inference-request-path.svg)
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as Envoy Gateway<br/>(envoy-gateway-system)
+  participant E as EPP<br/>(llama)
+  participant NP as NetworkPolicy<br/>(llama)
+  participant V as vLLM pod
+  participant GPU as NVIDIA GPU
+  participant OT as OTel collector
+  participant P as Prometheus
+
+  C->>G: POST /v1/chat/completions<br/>Authorization: Bearer <api-key>
+  Note over G: BackendTrafficPolicy: 60 req/min
+  Note over G: EnvoyExtensionPolicy: ext_proc to EPP
+  G->>E: ext_proc gRPC — pick endpoint
+  E->>V: scrape /metrics (kv cache, queue depth)
+  V-->>E: metrics
+  E-->>G: chosen pod via x-gateway-destination-endpoint
+  G->>NP: forward to <chosen-pod>:8000
+  Note over NP: ingress allowed from envoy-gateway-system
+  NP->>V: reach vLLM
+  V->>V: validate --api-key (401 if bad)
+  V->>GPU: prefill
+  GPU-->>V: first token
+  V-->>C: SSE stream start (TTFT)
+  loop until EOS / max_tokens
+    V->>GPU: decode step
+    GPU-->>V: next token
+    V-->>C: stream token
+  end
+  V->>OT: OTLP traces
+  V-)P: /metrics scrape (15s)
+  E-)P: /metrics scrape (EPP scoring stats)
+```
 
 ### Observability data flow
 
 Metrics, logs, and traces from every source into Prometheus / Loki / Tempo,
-then out to Grafana + Alertmanager.
+then out to Grafana + Alertmanager. Source: [`images/observability-data-flow.mmd`](images/observability-data-flow.mmd).
 
-![Observability data flow](images/observability-data-flow.svg)
+```mermaid
+flowchart LR
+  subgraph sources[Sources]
+    vllm[vLLM]
+    epp[EPP]
+    dcgm[DCGM exporter]
+    ksm[kube-state-metrics]
+    ne[node-exporter]
+    egdp[Envoy Gateway]
+    eval[model-quality-eval]
+  end
+
+  subgraph collect[Collection]
+    otel[OTel collector]
+    pushgw[Pushgateway]
+    prom[Prometheus 6h]
+  end
+
+  subgraph store[Long-term]
+    loki[Loki 168h]
+    tempo[Tempo]
+  end
+
+  subgraph consume[Consumption]
+    graf[Grafana]
+    am[Alertmanager]
+    rules[PrometheusRule]
+  end
+
+  vllm -->|OTLP traces| otel
+  vllm -->|/metrics 15s| prom
+  vllm --> stdout[stdout] --> otel
+  epp -->|/metrics 15s| prom
+  dcgm --> prom
+  ksm --> prom
+  ne --> prom
+  egdp -->|/stats| prom
+  eval -->|push| pushgw --> prom
+
+  otel --> tempo
+  otel --> loki
+  otel -->|remote_write| prom
+
+  prom --> rules --> am
+  prom --> graf
+  loki --> graf
+  tempo --> graf
+  graf -.exemplars.-> tempo
+```
+
+### Networking / NetworkPolicy topology
+
+Which pods can talk to which, and where the ingress/egress rules live.
+Source: [`images/networking.mmd`](images/networking.mmd).
+
+```mermaid
+flowchart TB
+  subgraph external[External / Brev :8080]
+    client([Client])
+  end
+
+  subgraph egs[ns: envoy-gateway-system]
+    egdp[envoy data-plane :8080]
+  end
+
+  subgraph mon[ns: monitoring]
+    prom[Prometheus]
+    otel[OTel collector]
+  end
+
+  subgraph argons[ns: argo]
+    bench[bench + eval Workflows]
+  end
+
+  subgraph llama[ns: llama]
+    subgraph nps[NetworkPolicies chart+inference/]
+      denyAll{{default-deny all pods}}
+      allowVllm{{allow vLLM<br/>ingress: envoy-gateway-system :8000, monitoring :8000, argo :8000<br/>egress: kube-dns, vault, OTel :4317/:4318, HuggingFace :443}}
+      allowEpp{{allow EPP<br/>ingress: envoy-gateway-system :9002/:9003, monitoring :9090<br/>egress: kube-dns, k8s API :443, vLLM :8000}}
+      allowScrape{{allow EPP → vLLM<br/>same-ns intra-cluster}}
+    end
+    vllm[vLLM pod :8000]
+    epp[EPP pod :9002/:9090]
+  end
+
+  subgraph vault_ns[ns: vault]
+    vault[vault-0]
+  end
+  subgraph kube[ns: kube-system]
+    dns[coredns]
+    kubeapi[(k8s API :443)]
+  end
+
+  client --> egdp
+  egdp -->|/v1 :8000| vllm
+  egdp -->|ext_proc :9002| epp
+  epp -->|scrape :8000| vllm
+  epp -->|watches CRDs| kubeapi
+  epp --> dns
+  prom -->|scrape| vllm
+  prom -->|scrape| epp
+  vllm -->|OTLP| otel
+  bench -->|/v1 :8000| vllm
+  vllm -.first boot only.-> hf[(huggingface.co :443)]
+  vllm -.HF token.-> vault
+```
 
 ```
 .github/         GitHub Actions CI (helm lint, kubeconform, kyverno test, mermaid render)
@@ -201,44 +423,60 @@ kubectl run dcgm-diag --rm -it --restart=Never \
 ## Gateway API Inference Extension
 
 The vLLM data-path uses the [Gateway API Inference Extension](https://github.com/kubernetes-sigs/gateway-api-inference-extension)
-(v1.5.0). Instead of routing to the vLLM Service directly, the `vllm`
-HTTPRoute now points at an `InferencePool` — a smart backend that consults
-an out-of-process **Endpoint Picker (EPP)** on every request. The EPP reads
-each vLLM pod's `/metrics` (KV cache pressure, queue depth, active LoRA
-adapters) and returns the least-loaded replica to Envoy.
-
-```
-Client → Envoy Gateway (Envoy) ──ext_proc gRPC──▶ EPP ──scrapes /metrics──▶ vLLM pods
-                     ▲                           │
-                     └─────picks endpoint────────┘
-                          │
-                          ▼
-                     forward request to chosen pod
-```
+(v1.5.0) EPP + InferencePool, wired to Envoy Gateway via an
+`EnvoyExtensionPolicy` (Envoy Gateway v1.3.2 doesn't accept
+`inference.networking.k8s.io/InferencePool` as a `backendRefs.group`, so
+the HTTPRoute uses a plain Service backend and the ext_proc filter is
+attached via policy — functionally equivalent, wired manually).
 
 **Resources** (`inference/`):
 - `epp-rbac.yaml` — ServiceAccount + ClusterRole + binding. EPP needs to
   list pods/endpointslices/services, and read InferencePool /
-  InferenceObjective / HTTPRoute.
+  InferenceObjective / InferenceModelRewrite / HTTPRoute.
 - `epp-deployment.yaml` — EPP `Deployment` (single replica, 200m CPU /
   256Mi mem), `Service` (grpc:9002, grpc-health:9003, metrics:9090),
   `ServiceMonitor` (metrics scrape at 15s). Image
-  `registry.k8s.io/gateway-api-inference-extension/epp:v1.5.0`.
-- `inferencepool.yaml` — `InferencePool` `llama-8b` matching the vLLM pods
-  by their standard `app.kubernetes.io/name + instance` labels, pointing at
-  the EPP Service.
+  `registry.k8s.io/gateway-api-inference-extension/epp:v1.5.0`. Overrides
+  `--kv-cache-usage-percentage-metric=vllm:gpu_cache_usage_perc` because
+  vLLM v0.7.3 uses that metric name (EPP defaults are for newer vLLM).
+- `epp-networkpolicy.yaml` — dedicated NetworkPolicy for EPP: allows
+  ingress from `envoy-gateway-system` for ext_proc + `monitoring` for
+  metrics; egress to kube-dns, k8s API (:443 for CRD watches), and vLLM
+  on :8000 for /metrics scraping.
+- `inferencepool.yaml` — `InferencePool` `llama-8b` matching vLLM pods by
+  their `app.kubernetes.io/name + instance` labels, pointing at the EPP
+  Service. Kept mainly so EPP knows which endpoints to score; the
+  HTTPRoute doesn't reference it as a backend.
 
-**HTTPRoute change** (`httproutes/vllm.yaml`):
+**HTTPRoute + EnvoyExtensionPolicy** (`httproutes/vllm.yaml` +
+`httproutes/vllm-epp-extension.yaml`):
 ```yaml
+# HTTPRoute — plain Service backend
 backendRefs:
-  - group: inference.networking.k8s.io
-    kind: InferencePool
-    name: llama-8b
+  - name: llama-llama-8b
+    port: 8000
+---
+# EnvoyExtensionPolicy — attaches ext_proc filter to the vllm route
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+spec:
+  targetRefs:
+    - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: vllm}
+  extProc:
+    - backendRefs:
+        - {name: llama-8b-epp, port: 9002}
+      messageTimeout: 5s
+      failOpen: true    # fall back to plain routing if EPP is down
 ```
-(was `backendRefs.name: llama-llama-8b, port: 8000` — a plain Service ref.)
 
-**Sync waves**: CRDs at `-3` (before workloads), EPP + InferencePool at `11`
-(after llama Deployment exists so pod-label selector resolves).
+The request path: Envoy Gateway receives `/v1/*` → calls EPP over ext_proc
+→ EPP returns the chosen pod IP via `x-gateway-destination-endpoint`
+header → Envoy Gateway forwards there. With `failOpen: true`, an EPP
+outage still routes via the plain Service — you don't lose inference,
+just the endpoint-scoring.
+
+**Sync waves**: CRDs at `-3` (before workloads), EPP + InferencePool at
+`11` (after llama Deployment exists so pod-label selector resolves).
 
 ### Honest assessment on a single vLLM replica
 
@@ -605,7 +843,7 @@ port 8080 in Brev. Path-based routing — `http://<brev-url>/<prefix>`:
 | `/grafana` | `kps-grafana` (monitoring)    | `grafana.yaml`            | Grafana — dashboards + Explore      |
 | `/argo`    | `argo-workflows-server` (argo)| `argo-workflows.yaml`     | Argo Workflows UI — load-test runs  |
 
-Sync-wave order: gateway-api-crds `-6` → Envoy Gateway-crds `-5` → Envoy Gateway `-4` →
+Sync-wave order: gateway-api-crds `-6` → envoy-gateway `-4` →
 gateway `-2` → httproutes `11` (after backends exist).
 
 The three UIs are configured to serve from their path prefix — no URLRewrite:
@@ -617,17 +855,17 @@ The three UIs are configured to serve from their path prefix — no URLRewrite:
 - **Argo Workflows server**: `--base-href=/argo/` in `apps/argo-workflows.yaml`.
 
 To add a new backend, drop an HTTPRoute in `httproutes/` referencing
-`parentRefs: [{name: public, namespace: gateway, sectionName: http}]`.
+`parentRefs: [{name: public, namespace: envoy-gateway-system, sectionName: http}]`.
 
 ### Brev launchable ports
 
-Only **port 80** needs to be exposed — Brev's port publisher can proxy it to
-the Gateway's LoadBalancer Service (`kubectl -n gateway get svc` shows the
-Envoy Gateway-managed LB Service, usually `public`). Point Brev at that Service on
-port 80:
+Only **port 8080** needs to be exposed — Brev's port publisher points at the
+Envoy Gateway data-plane LoadBalancer Service (auto-created by Envoy Gateway
+in `envoy-gateway-system` as `envoy-envoy-gateway-system-public-<hash>`).
 
 ```bash
-kubectl -n gateway port-forward --address 0.0.0.0 svc/public 80:80
+kubectl -n envoy-gateway-system get svc | grep public
+# EXTERNAL-IP is the node IP; port 8080 is bound on the host via klipper-lb
 ```
 
 Then in a browser: `http://<node-ip>/argocd`, `/grafana`, `/argo`. Or hit the

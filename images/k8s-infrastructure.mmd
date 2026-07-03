@@ -1,19 +1,10 @@
 flowchart TB
-  subgraph external[External clients]
+  subgraph external[External]
     client([Client])
     op([Operator])
   end
 
   subgraph node[k3s single-node cluster]
-    subgraph gw_stack[Gateway data path]
-      subgraph gateway_ns[ns: gateway]
-        gw[Gateway<br/>public :80]
-      end
-      subgraph kgw_ns[ns: kgateway-system]
-        kgwctrl[kgateway<br/>controller]
-      end
-    end
-
     subgraph platform[Platform]
       subgraph argocd_ns[ns: argocd]
         argocd[argocd-server + controller<br/>reconciles from git]
@@ -25,7 +16,7 @@ flowchart TB
         eso[ESO<br/>vault → k8s Secrets]
       end
       subgraph kyverno_ns[ns: kyverno]
-        kyv[Kyverno<br/>admission + reports]
+        kyv[Kyverno<br/>admission + policy reports]
       end
       subgraph keda_ns[ns: keda]
         keda[KEDA operator]
@@ -36,14 +27,23 @@ flowchart TB
       end
     end
 
-    subgraph inference[Inference]
-      subgraph llama_ns[ns: llama]
-        vllm[vLLM pod<br/>priorityClass=gpu-inference<br/>runtimeClass=nvidia<br/>GPU: 1]
-        pvc[(hf-cache PVC<br/>100Gi local-path)]
-        vllm_svc[Service llama-llama-8b :8000]
-        netpol{{NetworkPolicy<br/>default-deny + allowlist}}
-        vllm --- pvc
-      end
+    subgraph gw_stack[ns: envoy-gateway-system]
+      egctrl[envoy-gateway<br/>controller]
+      egdp[envoy data-plane<br/>Deployment + LB Service :8080]
+      gwres[Gateway 'public'<br/>listener :8080]
+      gwclass[GatewayClass 'eg']
+    end
+
+    subgraph inference[Inference — ns: llama]
+      vllm[vLLM pod<br/>priorityClass=gpu-inference<br/>runtimeClass=nvidia<br/>GPU: 1]
+      pvc[(hf-cache PVC 100Gi)]
+      vllm_svc[Service llama-llama-8b :8000]
+      epp[EPP<br/>Endpoint Picker :9002]
+      epp_svc[Service llama-8b-epp]
+      ipool[InferencePool llama-8b<br/>selector -> vLLM pods]
+      netpol{{NetworkPolicy<br/>default-deny + allowlists}}
+      vllm --- pvc
+      epp --- epp_svc
     end
 
     subgraph obs_ns[ns: monitoring]
@@ -53,26 +53,32 @@ flowchart TB
       tempo[Tempo]
       otel[OTel collector]
       am[Alertmanager]
+      pushgw[Pushgateway]
     end
 
     subgraph argo_ns[ns: argo]
       argosrv[argo-workflows-server]
       argoctl[workflow-controller]
-      benchtpl[vllm-bench<br/>WorkflowTemplate]
+      benchtpl[vllm-bench + model-quality-eval<br/>WorkflowTemplates + CronWorkflow]
     end
   end
 
-  client -.HTTPS.-> gw
+  client -.HTTP :8080.-> egdp
   op -.git push.-> argocd
-  gw -->|reads| kgwctrl
-  argocd -.applies.-> gw
+  egctrl --programs--> egdp
+  argocd -.applies.-> gwres
   argocd -.applies.-> vllm
   argocd -.applies.-> platform
   argocd -.applies.-> obs_ns
+  argocd -.applies.-> ipool
+  argocd -.applies.-> epp
   eso -.reads.-> vault
-  gw -->|routes /v1| vllm_svc
+  egdp -->|routes /v1| vllm_svc
+  egdp -.ext_proc pick endpoint.-> epp_svc
+  epp -.scrapes /metrics.-> vllm
   vllm_svc --> vllm
-  gw -->|/grafana| graf
-  gw -->|/argocd| argocd
-  gw -->|/argo| argosrv
+  egdp -->|/grafana| graf
+  egdp -->|/argocd| argocd
+  egdp -->|/argo| argosrv
   benchtpl -.spawns.-> vllm_svc
+  benchtpl -.push metrics.-> pushgw
